@@ -150,7 +150,11 @@ function renderMine(){
   const rows=bosses.map(boss=>{
     const arr=state.signups.filter(s=>norm(s.player)===key&&s.cycle===cycleId&&s.boss===boss.name);
     return {boss:boss.name,dates:new Set(arr.map(s=>s.date)),count:arr.length};
-  });
+  }).filter(row=>row.count>0);
+  if(!rows.length){
+    mySignupList.innerHTML='<div class="empty">目前沒有這個玩家在本週期的報名</div>';
+    return;
+  }
   mySignupList.innerHTML=rows.map(row=>`
     <div class="roster-player my-row">
       <div class="roster-head"><b>${name}｜${row.boss}｜${cycleId}</b><small>${row.count} 筆，點日期可加入或取消</small></div>
