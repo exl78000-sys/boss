@@ -36,7 +36,7 @@
           <input id="playerName" type="text" placeholder="例如：早餐 / 午餐 / 宵夜" autocomplete="nickname" />
           <label class="check-row mt"><input id="hasAlt" type="checkbox" /> <span>有分身角色</span></label>
           <input id="accountGroup" class="mt hidden" type="text" placeholder="分身群組名稱，例如：早餐" />
-          <p class="hint">若同一位玩家有多個角色，請填寫相同的分身群組名稱。例如：角色名稱「早餐 / 午餐 / 宵夜」，分身群組名稱都填「早餐」。</p>
+          <p class="hint">若同一位玩家有多個角色，請填寫相同的分身群組名稱。例如：角色名稱「早餐 / 午餐 / 宵夜」，分身群組名稱都填「早餐」。同一天被排到多隻會顯示橘燈提醒；自動編隊不會把同分身群組排入同一隊。</p>
         </div>
 
         <div class="card">
@@ -62,8 +62,8 @@
         <button id="submitSignup" class="primary full">送出報名</button>
 
         <div class="card">
-          <h2>取消報名</h2>
-          <p class="hint">輸入同一個玩家名稱後，可在下方刪除自己的報名。</p>
+          <h2>查看我的報名</h2>
+          <p class="hint">輸入玩家名稱後，會以 7 天一列顯示。綠燈代表已報名，紅燈代表未報名；點日期可確認取消或加入。</p>
           <button id="refreshMine" class="ghost full">查看我的報名</button>
           <div id="mySignupList" class="list mt"></div>
         </div>
@@ -71,9 +71,11 @@
 
       <section id="rosterPage" class="page">
         <div class="card">
-          <label>單獨查看報名名單</label>
+          <label>查看報名 / 自動排隊</label>
           <select id="rosterCycle"></select>
           <div id="rosterBossBtns" class="boss-grid mt"></div>
+          <p class="hint">點日期可直接加入或取消該日報名，系統會跳出確認視窗。</p>
+          <button id="rosterGenerateTeams" class="primary full mt">自動編排隊伍</button>
         </div>
         <div class="card">
           <div class="row between">
@@ -81,6 +83,13 @@
             <span id="rosterCount" class="badge">0筆</span>
           </div>
           <div id="rosterList" class="list"></div>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h2>隊伍結果</h2>
+            <button id="rosterCopyTeams" class="ghost">複製</button>
+          </div>
+          <div id="rosterTeamResult" class="team-result empty">尚未編排</div>
         </div>
       </section>
 

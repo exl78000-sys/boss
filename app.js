@@ -17,7 +17,7 @@ try{ enableIndexedDbPersistence(db).catch(()=>{}); }catch{}
 
 const $=id=>document.getElementById(id);
 const installBtn=$('installBtn'), currentCycleText=$('currentCycleText'), cycleBtns=$('cycleBtns'), classGroupBtns=$('classGroupBtns'), jobBtns=$('jobBtns'), bossBtns=$('bossBtns'), dateChecks=$('dateChecks'), selectAllDates=$('selectAllDates'), submitSignup=$('submitSignup'), playerName=$('playerName'), hasAlt=$('hasAlt'), accountGroup=$('accountGroup');
-const adminCycle=$('adminCycle'), adminBoss=$('adminBoss'), adminDate=$('adminDate'), rosterCycle=$('rosterCycle'), rosterBossBtns=$('rosterBossBtns'), rosterTitle=$('rosterTitle'), rosterCount=$('rosterCount'), rosterList=$('rosterList');
+const adminCycle=$('adminCycle'), adminBoss=$('adminBoss'), adminDate=$('adminDate'), rosterCycle=$('rosterCycle'), rosterBossBtns=$('rosterBossBtns'), rosterTitle=$('rosterTitle'), rosterCount=$('rosterCount'), rosterList=$('rosterList'), rosterGenerateTeams=$('rosterGenerateTeams'), rosterTeamResult=$('rosterTeamResult'), rosterCopyTeams=$('rosterCopyTeams');
 const mySignupList=$('mySignupList'), refreshMine=$('refreshMine'), signupCount=$('signupCount'), signupList=$('signupList'), generateTeams=$('generateTeams'), teamResult=$('teamResult'), copyTeams=$('copyTeams');
 const allData=$('allData'), exportData=$('exportData'), importData=$('importData'), clearData=$('clearData');
 
@@ -25,7 +25,7 @@ const bosses=[{name:'龍王',limit:12},{name:'困拉',limit:6},{name:'炎魔',li
 const jobs={劍士:['黑騎','英雄','聖騎士'],弓箭手:['弩手','弓手'],盜賊:['標賊','刀賊'],海盜:['槍手','拳霸'],法師:['主教','冰雷','火毒']};
 const KEY='bossSignupApp.v10.cloud';
 const OLD_KEY='bossSignupApp.v1';
-let state={signups:[]};let selectedCycle='';let selectedBoss='龍王';let selectedGroup='劍士';let selectedJob='黑騎';let selectedRosterBoss='龍王';let lastTeams=[];let lastTeamMode='date';
+let state={signups:[]};let selectedCycle='';let selectedBoss='龍王';let selectedGroup='劍士';let selectedJob='黑騎';let selectedRosterBoss='龍王';let lastTeams=[];let lastTeamMode='date';let lastTeamsContext={boss:'龍王',date:'週期全部日期',cycle:''};
 
 function load(){ return {signups:[]}; }
 function setSyncStatus(msg,cls='sync-warn'){
@@ -108,14 +108,14 @@ submitSignup.onclick=async()=>{
   else if(added)toast(`報名成功：${added} 筆`);
   else toast('沒有新增，這些日期已經報名過');
 };
-function fillCycleSelect(el){const cs=cycles();el.innerHTML=cs.map(c=>`<option ${c.id===selectedCycle?'selected':''}>${c.id}</option>`).join('')}
+function fillCycleSelect(el){const cs=cycles();const current=el.value||selectedCycle;el.innerHTML=cs.map(c=>`<option ${c.id===current?'selected':''}>${c.id}</option>`).join('');if(!el.value)el.value=selectedCycle}
 function renderAll(){const cs=cycles();fillCycleSelect(adminCycle);fillCycleSelect(rosterCycle);adminBoss.innerHTML=bosses.map(b=>`<option>${b.name}</option>`).join('');if(!adminBoss.value)adminBoss.value='龍王';const c=cs.find(x=>x.id===adminCycle.value)||cs[0];adminDate.innerHTML=['週期全部日期',...c.dates.map(d=>`${fmt(d)} ${dow(d)}`)].map(v=>`<option>${v}</option>`).join('');renderSignupList();renderAllData();renderRoster();renderMine()}
 [adminCycle,adminBoss,adminDate].forEach(el=>el.onchange=()=>{lastTeams=[];renderSignupList();teamResult.innerHTML='尚未編排';teamResult.classList.add('empty')});
-rosterCycle.onchange=renderRoster;
+rosterCycle.onchange=()=>{lastTeams=[];rosterTeamResult.innerHTML='尚未編排';rosterTeamResult.classList.add('empty');renderRoster()};
 
 function renderRoster(){
   rosterBossBtns.innerHTML=bosses.map(b=>`<button class="choice ${b.name===selectedRosterBoss?'active':''}" data-boss="${b.name}" type="button">${b.name}</button>`).join('');
-  rosterBossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedRosterBoss=b.dataset.boss;renderRoster()});
+  rosterBossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedRosterBoss=b.dataset.boss;lastTeams=[];rosterTeamResult.innerHTML='尚未編排';rosterTeamResult.classList.add('empty');renderRoster()});
   const cycleId=rosterCycle.value;
   const c=cycles().find(x=>x.id===cycleId)||cycles()[0];
   const dateLabels=c.dates.map(d=>`${fmt(d)} ${dow(d)}`);
@@ -141,10 +141,41 @@ function renderRoster(){
 }
 function dateOrderForCycle(label,cycleId){const c=cycles().find(x=>x.id===cycleId);return c?c.dates.map(d=>`${fmt(d)} ${dow(d)}`).indexOf(label):999}
 function renderMine(){
-  const name=norm(playerName?.value);
-  if(!name){mySignupList.innerHTML='<div class="empty">輸入玩家名稱後可查看/取消報名</div>';return}
-  const arr=state.signups.filter(s=>norm(s.player)===name).sort((a,b)=>a.cycle.localeCompare(b.cycle)||a.boss.localeCompare(b.boss,'zh-Hant')||dateOrderForCycle(a.date,a.cycle)-dateOrderForCycle(b.date,b.cycle));
-  mySignupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${s.cycle}｜${s.boss}｜${s.date}</b><small>${s.player}｜${s.job}${displayAccount(s)}｜報名 ${signupTime(s)}</small><button class="danger small mt" onclick="deleteSignup('${s.id}')">取消報名</button></div>`).join(''):'<div class="empty">查無這個玩家名稱的報名</div>';
+  const name=playerName.value.trim();
+  const key=norm(name);
+  if(!key){mySignupList.innerHTML='<div class="empty">輸入玩家名稱後可查看報名</div>';return}
+  const cycleId=selectedCycle;
+  const c=cycles().find(x=>x.id===cycleId)||cycles()[0];
+  const dateLabels=c.dates.map(d=>`${fmt(d)} ${dow(d)}`);
+  const rows=bosses.map(boss=>{
+    const arr=state.signups.filter(s=>norm(s.player)===key&&s.cycle===cycleId&&s.boss===boss.name);
+    return {boss:boss.name,dates:new Set(arr.map(s=>s.date)),count:arr.length};
+  });
+  mySignupList.innerHTML=rows.map(row=>`
+    <div class="roster-player my-row">
+      <div class="roster-head"><b>${name}｜${row.boss}｜${cycleId}</b><small>${row.count} 筆，點日期可加入或取消</small></div>
+      <div class="availability-grid mine-grid">
+        ${dateLabels.map(d=>`<button type="button" class="availability mine-date ${row.dates.has(d)?'yes':'no'}" data-boss="${row.boss}" data-date="${d}"><span>${d.replace(' ','')}</span><b>${row.dates.has(d)?'●':'×'}</b></button>`).join('')}
+      </div>
+    </div>`).join('');
+  mySignupList.querySelectorAll('.mine-date').forEach(btn=>btn.onclick=()=>toggleMineDate(btn.dataset.boss,btn.dataset.date));
+}
+async function toggleMineDate(boss,date){
+  const name=playerName.value.trim();
+  if(!name)return toast('請輸入玩家名稱');
+  if(hasAlt.checked&&!accountGroup.value.trim())return toast('請輸入分身群組名稱');
+  const existing=state.signups.find(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle&&s.boss===boss&&s.date===date);
+  if(existing){
+    if(!confirm(`確認取消 ${name}｜${boss}｜${date}？`))return;
+    await deleteDoc(doc(db,'signups',existing.id));
+    toast('已取消報名');
+    return;
+  }
+  if(!confirm(`確認加入 ${name}｜${boss}｜${date}？`))return;
+  const item={id:'',cycle:selectedCycle,boss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:!!hasAlt.checked,accountGroup:hasAlt.checked?accountGroup.value.trim():'',createdAt:new Date().toISOString()};
+  const id=docIdForSignup(item); item.id=id;
+  await setDoc(doc(db,'signups',id),{...item,createdAtText:item.createdAt,createdAtServer:serverTimestamp()});
+  toast('已加入報名');
 }
 async function deleteSignup(id){
   await deleteDoc(doc(db,'signups',id));
@@ -153,7 +184,7 @@ async function deleteSignup(id){
 refreshMine.onclick=renderMine;
 playerName.addEventListener('input',renderMine);
 
-function filtered(){return state.signups.filter(s=>s.cycle===adminCycle.value&&s.boss===adminBoss.value&&(adminDate.value==='週期全部日期'||s.date===adminDate.value))}
+function filtered(cycle=adminCycle.value,boss=adminBoss.value,date=adminDate.value){return state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&(date==='週期全部日期'||s.date===date))}
 function renderSignupList(){const arr=filtered().sort((a,b)=>timeValue(a)-timeValue(b));signupCount.textContent=`${arr.length}筆`;signupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${s.player}</b><small>${s.job}${displayAccount(s)}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}</small></div>`).join(''):'<div class="empty">目前沒有人報名</div>'}
 function hasJobInfo(x){return !!(x&&x.group&&x.job)}
 function isArcher(x){return x.group==='弓箭手'}
@@ -254,28 +285,35 @@ function buildTeamsForDate(arr,boss){
   }
   return teams;
 }
-function buildWeeklyTeams(){
-  const base=state.signups.filter(s=>s.cycle===adminCycle.value&&s.boss===adminBoss.value);
+function buildWeeklyTeams(cycle=adminCycle.value,boss=adminBoss.value){
+  const base=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss);
   const byDate={};base.forEach(s=>{(byDate[s.date]??=[]).push(s)});
-  const dates=Object.keys(byDate).sort((a,b)=>byDate[b].length-byDate[a].length||dateOrder(a)-dateOrder(b));
+  const dates=Object.keys(byDate).sort((a,b)=>byDate[b].length-byDate[a].length||dateOrder(a,cycle)-dateOrder(b,cycle));
   const used=new Set();
   const result=[];
   dates.forEach(date=>{
     const arr=byDate[date].filter(s=>!used.has(norm(s.player)));
-    const teams=buildTeamsForDate(arr,adminBoss.value);
+    const teams=buildTeamsForDate(arr,boss);
     teams.forEach(team=>team.forEach(m=>used.add(norm(m.player))));
     if(teams.length)result.push({date,teams,total:byDate[date].length,arranged:arr.length});
   });
   return result;
 }
-function dateOrder(label){const c=cycles().find(x=>x.id===adminCycle.value);return c?c.dates.map(d=>`${fmt(d)} ${dow(d)}`).indexOf(label):999}
+function dateOrder(label,cycleId=adminCycle.value){const c=cycles().find(x=>x.id===cycleId);return c?c.dates.map(d=>`${fmt(d)} ${dow(d)}`).indexOf(label):999}
 generateTeams.onclick=()=>{
   lastTeamMode=adminDate.value==='週期全部日期'?'week':'date';
-  lastTeams=lastTeamMode==='week'?buildWeeklyTeams():buildTeamsForDate(filtered(),adminBoss.value);
-  renderTeams(lastTeams)
+  lastTeamsContext={boss:adminBoss.value,date:adminDate.value,cycle:adminCycle.value};
+  lastTeams=lastTeamMode==='week'?buildWeeklyTeams(adminCycle.value,adminBoss.value):buildTeamsForDate(filtered(adminCycle.value,adminBoss.value,adminDate.value),adminBoss.value);
+  renderTeams(lastTeams,teamResult,lastTeamsContext)
+};
+rosterGenerateTeams.onclick=()=>{
+  lastTeamMode='week';
+  lastTeamsContext={boss:selectedRosterBoss,date:'週期全部日期',cycle:rosterCycle.value};
+  lastTeams=buildWeeklyTeams(rosterCycle.value,selectedRosterBoss);
+  renderTeams(lastTeams,rosterTeamResult,lastTeamsContext);
 };
 
-function collectConflicts(data){
+function collectConflicts(data,ctx=lastTeamsContext){
   const byDate=new Map();
   if(lastTeamMode==='week'){
     data.forEach(day=>{
@@ -284,7 +322,7 @@ function collectConflicts(data){
     });
   }else{
     const list=[]; data.forEach(team=>team.forEach(m=>list.push(m)));
-    byDate.set(adminDate.value,list);
+    byDate.set(ctx.date,list);
   }
   const conflictMap=new Map();
   byDate.forEach((members,date)=>{
@@ -307,32 +345,36 @@ function conflictSummary(conflicts){
   return `<div class="conflict-summary">⚠ 分身群組衝突提醒：${totalGroups} 組 / ${totalChars} 角色<br>${lines.join('<br>')}</div>`;
 }
 function isConflictMember(m,date,conflicts){const k=accountKey(m);return !!(k&&conflicts.get(date)?.has(k));}
-function renderTeams(data){
-  teamResult.classList.remove('empty');
-  if(!data.length){teamResult.innerHTML='<div class="empty">目前沒有可編排的隊伍</div>';return}
-  const conflicts=collectConflicts(data);
+function renderTeams(data,target=teamResult,ctx=lastTeamsContext){
+  target.classList.remove('empty');
+  if(!data.length){target.innerHTML='<div class="empty">目前沒有可編排的隊伍</div>';return}
+  const conflicts=collectConflicts(data,ctx);
   const summary=conflictSummary(conflicts);
   if(lastTeamMode==='week'){
-    teamResult.innerHTML=summary+data.map(day=>`<div class="day-block"><h2>${day.date}｜原報名 ${day.total} 筆｜可排 ${day.arranged} 人</h2>${day.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts)).join('')}</div>`).join('');
+    target.innerHTML=summary+data.map(day=>`<div class="day-block"><h2>${day.date}｜原報名 ${day.total} 筆｜可排 ${day.arranged} 人</h2>${day.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts,ctx)).join('')}</div>`).join('');
   }else{
-    teamResult.innerHTML=summary+data.map((team,i)=>teamHTML(team,i,adminDate.value,conflicts)).join('');
+    target.innerHTML=summary+data.map((team,i)=>teamHTML(team,i,ctx.date,conflicts,ctx)).join('');
   }
 }
-function teamHTML(team,i,date,conflicts=new Map()){
-  const req=requirementStatus(team,adminBoss.value);
+function teamHTML(team,i,date,conflicts=new Map(),ctx=lastTeamsContext){
+  const req=requirementStatus(team,ctx.boss);
   const missing=req.filter(r=>r.missing>0);
   const reqText=req.length?`<div class="req-line">${req.map(r=>`${r.label} ${r.have}/${r.count}${r.missing?' 缺'+r.missing:''}`).join('｜')}</div>`:'';
   const missingText=missing.length?`<div class="missing-line">缺少：${missing.map(r=>`${r.label} ${r.missing}`).join('、')}</div>`:'';
-  return `<div class="team ${missing.length?'team-warning':''}"><h3>${adminBoss.value} ${date} 第 ${i+1} 隊｜${team.length}人</h3>${reqText}${missingText}${team.map((m,idx)=>{const c=isConflictMember(m,date,conflicts);return `<div class="slot ${c?'conflict':''}"><b>${idx+1}</b><div>${c?'<span class="conflict-dot">●</span>':''}${m.player}<div class="job">${m.group}｜${m.job}${displayAccount(m)}｜報名 ${signupTime(m)}</div></div><span>${tag(m)}</span></div>`}).join('')}</div>`
+  return `<div class="team ${missing.length?'team-warning':''}"><h3>${ctx.boss} ${date} 第 ${i+1} 隊｜${team.length}人</h3>${reqText}${missingText}${team.map((m,idx)=>{const c=isConflictMember(m,date,conflicts);return `<div class="slot ${c?'conflict':''}"><b>${idx+1}</b><div>${c?'<span class="conflict-dot">●</span>':''}${m.player}<div class="job">${m.group}｜${m.job}${displayAccount(m)}｜報名 ${signupTime(m)}</div></div><span>${tag(m)}</span></div>`}).join('')}</div>`
 }
 function tag(m){if(m.job==='黑騎')return '黑騎';if(m.job==='拳霸')return '拳';if(m.group==='弓箭手')return '弓';if(m.group==='法師')return '法';return '輸出'}
-copyTeams.onclick=async()=>{
+async function copyCurrentTeams(){
   if(!lastTeams.length)return toast('請先自動編排');
+  const boss=lastTeamsContext.boss;
+  const date=lastTeamsContext.date;
   let txt='';
-  if(lastTeamMode==='week') txt=lastTeams.map(day=>day.teams.map((team,i)=>`${adminBoss.value} ${day.date} 第${i+1}隊\n`+team.map((m,idx)=>`${idx+1}. ${m.player}｜${m.job}`).join('\n')).join('\n\n')).join('\n\n');
-  else txt=lastTeams.map((team,i)=>`${adminBoss.value} ${adminDate.value} 第${i+1}隊\n`+team.map((m,idx)=>`${idx+1}. ${m.player}｜${m.job}`).join('\n')).join('\n\n');
+  if(lastTeamMode==='week') txt=lastTeams.map(day=>day.teams.map((team,i)=>`${boss} ${day.date} 第${i+1}隊\n`+team.map((m,idx)=>`${idx+1}. ${m.player}｜${m.job}`).join('\n')).join('\n\n')).join('\n\n');
+  else txt=lastTeams.map((team,i)=>`${boss} ${date} 第${i+1}隊\n`+team.map((m,idx)=>`${idx+1}. ${m.player}｜${m.job}`).join('\n')).join('\n\n');
   await navigator.clipboard.writeText(txt);toast('已複製隊伍')
-};
+}
+copyTeams.onclick=copyCurrentTeams;
+rosterCopyTeams.onclick=copyCurrentTeams;
 function renderAllData(){allData.innerHTML=state.signups.length?state.signups.slice().reverse().map(s=>`<div class="item"><b>${s.player}｜${s.job}${displayAccount(s)}</b><small>${s.cycle}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}</small></div>`).join(''):'<div class="empty">尚無資料</div>'}
 exportData.onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-signups-cloud.json';a.click();URL.revokeObjectURL(a.href)};
 importData.onchange=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=Array.isArray(data)?data:(data.signups||[]);const batch=writeBatch(db);arr.forEach(x=>{const item={...x,id:x.id||docIdForSignup(x),createdAt:x.createdAt||x.createdAtText||new Date().toISOString()};batch.set(doc(db,'signups',item.id),{...item,createdAtText:item.createdAt,createdAtServer:serverTimestamp()});});await batch.commit();toast('匯入成功')}catch(err){console.error(err);toast('匯入失敗')}};r.readAsText(file)};
