@@ -191,8 +191,18 @@ function outputPriority(boss,x){
 function sortOutputPool(pool,boss){
   pool.sort((a,b)=>outputPriority(boss,a)-outputPriority(boss,b)||bySignupTime(a,b));
 }
+function canJoinTeam(team,m){
+  const k=accountKey(m);
+  if(!k)return true;
+  return !team.some(x=>accountKey(x)===k);
+}
+function takeFromBucket(bucket,team){
+  const i=bucket.findIndex(m=>canJoinTeam(team,m));
+  return i>=0?bucket.splice(i,1)[0]:null;
+}
 function fillOutputBalanced(team,pool,boss,limit){
-  // 輸出位改成輪流挑選：優先1一位 → 優先2一位 → 優先3一位 → 再回優先1，避免同一順位/職業一次塞滿。
+  // 輸出位輪流挑選：優先1一位 → 優先2一位 → 優先3一位 → 再回優先1。
+  // 同一隊內不可放入相同分身群組；若會衝突，保留給下一隊。
   const ranks=[...new Set(pool.map(x=>outputPriority(boss,x)))].sort((a,b)=>a-b);
   const buckets=new Map();
   ranks.forEach(r=>buckets.set(r,[]));
@@ -203,11 +213,12 @@ function fillOutputBalanced(team,pool,boss,limit){
     for(const r of ranks){
       const bucket=buckets.get(r)||[];
       if(team.length>=limit)break;
-      if(bucket.length){team.push(bucket.shift());picked=true;}
+      const m=takeFromBucket(bucket,team);
+      if(m){team.push(m);picked=true;}
     }
     if(!picked)break;
   }
-  // 剩餘未排入者放回 pool，讓下一隊繼續使用，同樣保留輪流挑選後的相對順序。
+  // 剩餘未排入者放回 pool，讓下一隊繼續使用。
   ranks.forEach(r=>{const bucket=buckets.get(r)||[];while(bucket.length)pool.push(bucket.shift())});
 }
 function bossRequirements(boss){
@@ -224,10 +235,10 @@ function requirementStatus(team,boss){
 function canSatisfyHard(pool,boss){
   return bossRequirements(boss).filter(r=>r.hard).every(r=>pool.filter(r.fn).length>=r.count);
 }
-function pick(pool,fn){const i=pool.findIndex(fn);return i>=0?pool.splice(i,1)[0]:null}
-function pushPick(team,pool,fn){const m=pick(pool,fn);if(m)team.push(m)}
+function pick(pool,fn,team=[]){const i=pool.findIndex(m=>fn(m)&&canJoinTeam(team,m));return i>=0?pool.splice(i,1)[0]:null}
+function pushPick(team,pool,fn){const m=pick(pool,fn,team);if(m)team.push(m)}
 function buildTeamsForDate(arr,boss){
-  // 只使用有職業資料的報名；先滿足必須/優先職業，不足仍產生隊伍並顯示缺少項目。
+  // 只使用有職業資料的報名；先滿足必須/優先職業，不足仍產生隊伍並顯示缺少項目；同一隊內避開相同分身群組。
   let pool=[...arr].filter(hasJobInfo).sort(bySignupTime);
   const limit=bosses.find(b=>b.name===boss)?.limit||6;
   if(!pool.length)return [];
