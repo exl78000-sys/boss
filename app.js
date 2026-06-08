@@ -68,9 +68,9 @@ function cycles(){const now=new Date();const thursday=addDays(now,(4-now.getDay(
 function toast(msg){const t=document.querySelector('#toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200)}
 function norm(s){return String(s||'').trim().toLowerCase()}
 function accountKey(s){return s&&s.hasAlt&&s.accountGroup?norm(s.accountGroup):''}
-function displayAccount(s){return s&&s.hasAlt&&s.accountGroup?`｜帳號 ${s.accountGroup}`:''}
+function displayAccount(s){return s&&s.hasAlt&&s.accountGroup?`｜分身群組 ${s.accountGroup}`:''}
 function signupKey(s){return `${norm(s.player)}|${s.cycle}|${s.boss}|${s.date}`}
-function init(){selectedCycle=cycles()[0].id;bindTabs();renderSignup();renderAll();startCloudSync();let deferred;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;installBtn.classList.remove('hidden')});installBtn.onclick=()=>deferred?.prompt();hasAlt.onchange=()=>{accountGroup.classList.toggle('hidden',!hasAlt.checked);if(hasAlt.checked&&!accountGroup.value.trim())accountGroup.value=playerName.value.trim();};}
+function init(){selectedCycle=cycles()[0].id;bindTabs();renderSignup();renderAll();startCloudSync();let deferred;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;installBtn.classList.remove('hidden')});installBtn.onclick=()=>deferred?.prompt();hasAlt.onchange=()=>{accountGroup.classList.toggle('hidden',!hasAlt.checked);if(!hasAlt.checked)accountGroup.value='';};}
 function bindTabs(){document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelector('#'+b.dataset.page).classList.add('active');renderAll()})}
 function renderSignup(){
   currentCycleText.textContent=`週期：${selectedCycle}`;
@@ -93,7 +93,7 @@ submitSignup.onclick=async()=>{
   const name=playerName.value.trim();
   const dates=[...dateChecks.querySelectorAll('input:checked')].map(x=>x.value);
   if(!name)return toast('請輸入玩家名稱');
-  if(hasAlt.checked&&!accountGroup.value.trim())return toast('請輸入本尊/帳號群組');
+  if(hasAlt.checked&&!accountGroup.value.trim())return toast('請輸入分身群組名稱');
   if(!dates.length)return toast('請至少選一個日期');
   let added=0,dupes=[];
   for(const date of dates){
@@ -293,7 +293,7 @@ function conflictSummary(conflicts){
       lines.push(`${date}：${members[0].accountGroup} 同一天 ${members.length} 隻（${members.map(m=>m.player).join('、')}）`);
     });
   });
-  return `<div class="conflict-summary">⚠ 分身衝突提醒：${totalGroups} 組 / ${totalChars} 角色<br>${lines.join('<br>')}</div>`;
+  return `<div class="conflict-summary">⚠ 分身群組衝突提醒：${totalGroups} 組 / ${totalChars} 角色<br>${lines.join('<br>')}</div>`;
 }
 function isConflictMember(m,date,conflicts){const k=accountKey(m);return !!(k&&conflicts.get(date)?.has(k));}
 function renderTeams(data){
