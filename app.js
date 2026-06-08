@@ -1,20 +1,55 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getFirestore, collection, doc, setDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD5L4tp6vnjgHOIM7aEWx3fd8D2KdOb6WI",
+  authDomain: "boss-app-34bcd.firebaseapp.com",
+  projectId: "boss-app-34bcd",
+  storageBucket: "boss-app-34bcd.firebasestorage.app",
+  messagingSenderId: "728632211313",
+  appId: "1:728632211313:web:66f966b8b7ccf6cb3ee8d0",
+  measurementId: "G-PN361HPV2J"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+const signupsCol = collection(db, 'signups');
+try{ enableIndexedDbPersistence(db).catch(()=>{}); }catch{}
+
+const $=id=>document.getElementById(id);
+const installBtn=$('installBtn'), currentCycleText=$('currentCycleText'), cycleBtns=$('cycleBtns'), classGroupBtns=$('classGroupBtns'), jobBtns=$('jobBtns'), bossBtns=$('bossBtns'), dateChecks=$('dateChecks'), selectAllDates=$('selectAllDates'), submitSignup=$('submitSignup'), playerName=$('playerName'), hasAlt=$('hasAlt'), accountGroup=$('accountGroup');
+const adminCycle=$('adminCycle'), adminBoss=$('adminBoss'), adminDate=$('adminDate'), rosterCycle=$('rosterCycle'), rosterBossBtns=$('rosterBossBtns'), rosterTitle=$('rosterTitle'), rosterCount=$('rosterCount'), rosterList=$('rosterList');
+const mySignupList=$('mySignupList'), refreshMine=$('refreshMine'), signupCount=$('signupCount'), signupList=$('signupList'), generateTeams=$('generateTeams'), teamResult=$('teamResult'), copyTeams=$('copyTeams');
+const allData=$('allData'), exportData=$('exportData'), importData=$('importData'), clearData=$('clearData');
+
 const bosses=[{name:'龍王',limit:12},{name:'困拉',limit:6},{name:'炎魔',limit:6},{name:'普拉',limit:6}];
 const jobs={劍士:['黑騎','英雄','聖騎士'],弓箭手:['弩手','弓手'],盜賊:['標賊','刀賊'],海盜:['槍手','拳霸'],法師:['主教','冰雷','火毒']};
-const KEY='bossSignupApp.v9';
+const KEY='bossSignupApp.v10.cloud';
 const OLD_KEY='bossSignupApp.v1';
-let state=load();let selectedCycle='';let selectedBoss='龍王';let selectedGroup='劍士';let selectedJob='黑騎';let selectedRosterBoss='龍王';let lastTeams=[];let lastTeamMode='date';
+let state={signups:[]};let selectedCycle='';let selectedBoss='龍王';let selectedGroup='劍士';let selectedJob='黑騎';let selectedRosterBoss='龍王';let lastTeams=[];let lastTeamMode='date';
 
-function load(){
-  try{
-    const keys=[KEY,'bossSignupApp.v8','bossSignupApp.v7','bossSignupApp.v6','bossSignupApp.v3','bossSignupApp.v2',OLD_KEY];
-    for(const k of keys){
-      const raw=localStorage.getItem(k);
-      if(raw) return JSON.parse(raw)||{signups:[]};
-    }
-    return {signups:[]};
-  }catch{return{signups:[]}}
+function load(){ return {signups:[]}; }
+function setSyncStatus(msg,cls='sync-warn'){
+  const el=document.querySelector('#syncStatus');
+  if(!el)return;
+  el.textContent='同步狀態：'+msg;
+  el.className='hint '+cls;
 }
-function save(){localStorage.setItem(KEY,JSON.stringify(state));renderAll()}
+function docIdForSignup(s){return encodeURIComponent(signupKey(s)).replace(/\//g,'_')}
+function signupFromDoc(d){const x=d.data();return {...x,id:d.id,createdAt:x.createdAtText||x.createdAt||''}}
+function startCloudSync(){
+  setSyncStatus('連線中','sync-warn');
+  onSnapshot(signupsCol,(snap)=>{
+    state={signups:snap.docs.map(signupFromDoc)};
+    setSyncStatus('已同步 '+state.signups.length+' 筆','sync-ok');
+    renderAll();
+  },(err)=>{
+    console.error(err);
+    setSyncStatus('連線失敗，請確認 Firestore 已建立且規則允許讀寫','sync-bad');
+    toast('Firebase 連線失敗');
+  });
+}
+function save(){renderAll()}
+
 function fmt(d){return `${d.getMonth()+1}/${d.getDate()}`}
 function signupTime(s){
   if(!s.createdAt)return '舊資料';
@@ -32,8 +67,10 @@ function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
 function cycles(){const now=new Date();const thursday=addDays(now,(4-now.getDay()+7)%7);return [0,7].map(offset=>{const s=addDays(thursday,offset),e=addDays(s,6);return {id:`${fmt(s)}-${fmt(e)}`,label:`${fmt(s)} - ${fmt(e)}`,dates:Array.from({length:7},(_,i)=>addDays(s,i))}})}
 function toast(msg){const t=document.querySelector('#toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200)}
 function norm(s){return String(s||'').trim().toLowerCase()}
+function accountKey(s){return s&&s.hasAlt&&s.accountGroup?norm(s.accountGroup):''}
+function displayAccount(s){return s&&s.hasAlt&&s.accountGroup?`｜帳號 ${s.accountGroup}`:''}
 function signupKey(s){return `${norm(s.player)}|${s.cycle}|${s.boss}|${s.date}`}
-function init(){selectedCycle=cycles()[0].id;bindTabs();renderSignup();renderAll();let deferred;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;installBtn.classList.remove('hidden')});installBtn.onclick=()=>deferred?.prompt()}
+function init(){selectedCycle=cycles()[0].id;bindTabs();renderSignup();renderAll();startCloudSync();let deferred;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;installBtn.classList.remove('hidden')});installBtn.onclick=()=>deferred?.prompt();hasAlt.onchange=()=>{accountGroup.classList.toggle('hidden',!hasAlt.checked);if(hasAlt.checked&&!accountGroup.value.trim())accountGroup.value=playerName.value.trim();};}
 function bindTabs(){document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelector('#'+b.dataset.page).classList.add('active');renderAll()})}
 function renderSignup(){
   currentCycleText.textContent=`週期：${selectedCycle}`;
@@ -52,18 +89,21 @@ function renderClassButtons(){
 }
 function renderDates(){const c=cycles().find(x=>x.id===selectedCycle);dateChecks.innerHTML=c.dates.map(d=>`<label class="choice dateChoice"><input type="checkbox" value="${fmt(d)} ${dow(d)}"><span>${fmt(d)} ${dow(d)}</span></label>`).join('')}
 selectAllDates.onclick=()=>{const checks=[...dateChecks.querySelectorAll('input')];const shouldCheck=checks.some(x=>!x.checked);checks.forEach(x=>x.checked=shouldCheck);selectAllDates.textContent=shouldCheck?'取消全選':'日期全選'};
-submitSignup.onclick=()=>{
+submitSignup.onclick=async()=>{
   const name=playerName.value.trim();
   const dates=[...dateChecks.querySelectorAll('input:checked')].map(x=>x.value);
   if(!name)return toast('請輸入玩家名稱');
+  if(hasAlt.checked&&!accountGroup.value.trim())return toast('請輸入本尊/帳號群組');
   if(!dates.length)return toast('請至少選一個日期');
   let added=0,dupes=[];
-  dates.forEach(date=>{
-    const item={id:crypto.randomUUID(),cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,createdAt:new Date().toISOString()};
-    if(state.signups.some(s=>signupKey(s)===signupKey(item))){dupes.push(date);return;}
-    state.signups.push(item);added++;
-  });
-  save();dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);selectAllDates.textContent='日期全選';
+  for(const date of dates){
+    const item={id:'',cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:!!hasAlt.checked,accountGroup:hasAlt.checked?accountGroup.value.trim():'',createdAt:new Date().toISOString()};
+    const id=docIdForSignup(item); item.id=id;
+    if(state.signups.some(s=>signupKey(s)===signupKey(item))){dupes.push(date);continue;}
+    await setDoc(doc(db,'signups',id),{...item,createdAtText:item.createdAt,createdAtServer:serverTimestamp()});
+    added++;
+  }
+  dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);selectAllDates.textContent='日期全選';
   if(added&&dupes.length)toast(`新增 ${added} 筆，已略過重複：${dupes.join('、')}`);
   else if(added)toast(`報名成功：${added} 筆`);
   else toast('沒有新增，這些日期已經報名過');
@@ -83,7 +123,7 @@ function renderRoster(){
   const byPlayer=new Map();
   arr.forEach(s=>{
     const key=norm(s.player);
-    if(!byPlayer.has(key))byPlayer.set(key,{player:s.player,job:s.job,group:s.group,dates:new Set(),firstTime:s.createdAt});
+    if(!byPlayer.has(key))byPlayer.set(key,{player:s.player,job:s.job,group:s.group,hasAlt:s.hasAlt,accountGroup:s.accountGroup,dates:new Set(),firstTime:s.createdAt});
     const p=byPlayer.get(key);
     p.dates.add(s.date);
     if(timeValue(s)&&(!p.firstTime||timeValue(s)<new Date(p.firstTime).getTime()))p.firstTime=s.createdAt;
@@ -93,7 +133,7 @@ function renderRoster(){
   rosterCount.textContent=`${players.length}人 / ${arr.length}筆`;
   rosterList.innerHTML=players.length?players.map(p=>`
     <div class="roster-player">
-      <div class="roster-head"><b>${p.player}</b><small>${p.job}｜可打 ${p.dates.size} 天｜首次 ${signupTime({createdAt:p.firstTime})}</small></div>
+      <div class="roster-head"><b>${p.player}</b><small>${p.job}${displayAccount(p)}｜可打 ${p.dates.size} 天｜首次 ${signupTime({createdAt:p.firstTime})}</small></div>
       <div class="availability-grid">
         ${dateLabels.map(d=>`<div class="availability ${p.dates.has(d)?'yes':'no'}"><span>${d.replace(' ','')}</span><b>${p.dates.has(d)?'●':'×'}</b></div>`).join('')}
       </div>
@@ -104,18 +144,17 @@ function renderMine(){
   const name=norm(playerName?.value);
   if(!name){mySignupList.innerHTML='<div class="empty">輸入玩家名稱後可查看/取消報名</div>';return}
   const arr=state.signups.filter(s=>norm(s.player)===name).sort((a,b)=>a.cycle.localeCompare(b.cycle)||a.boss.localeCompare(b.boss,'zh-Hant')||dateOrderForCycle(a.date,a.cycle)-dateOrderForCycle(b.date,b.cycle));
-  mySignupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${s.cycle}｜${s.boss}｜${s.date}</b><small>${s.player}｜${s.job}｜報名 ${signupTime(s)}</small><button class="danger small mt" onclick="deleteSignup('${s.id}')">取消報名</button></div>`).join(''):'<div class="empty">查無這個玩家名稱的報名</div>';
+  mySignupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${s.cycle}｜${s.boss}｜${s.date}</b><small>${s.player}｜${s.job}${displayAccount(s)}｜報名 ${signupTime(s)}</small><button class="danger small mt" onclick="deleteSignup('${s.id}')">取消報名</button></div>`).join(''):'<div class="empty">查無這個玩家名稱的報名</div>';
 }
-function deleteSignup(id){
-  const before=state.signups.length;
-  state.signups=state.signups.filter(s=>s.id!==id);
-  if(state.signups.length!==before){save();toast('已取消報名')}
+async function deleteSignup(id){
+  await deleteDoc(doc(db,'signups',id));
+  toast('已取消報名');
 }
 refreshMine.onclick=renderMine;
 playerName.addEventListener('input',renderMine);
 
 function filtered(){return state.signups.filter(s=>s.cycle===adminCycle.value&&s.boss===adminBoss.value&&(adminDate.value==='週期全部日期'||s.date===adminDate.value))}
-function renderSignupList(){const arr=filtered().sort((a,b)=>timeValue(a)-timeValue(b));signupCount.textContent=`${arr.length}筆`;signupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${s.player}</b><small>${s.job}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}</small></div>`).join(''):'<div class="empty">目前沒有人報名</div>'}
+function renderSignupList(){const arr=filtered().sort((a,b)=>timeValue(a)-timeValue(b));signupCount.textContent=`${arr.length}筆`;signupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${s.player}</b><small>${s.job}${displayAccount(s)}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}</small></div>`).join(''):'<div class="empty">目前沒有人報名</div>'}
 function hasJobInfo(x){return !!(x&&x.group&&x.job)}
 function isArcher(x){return x.group==='弓箭手'}
 function isMage(x){return x.group==='法師'}
@@ -224,21 +263,56 @@ generateTeams.onclick=()=>{
   lastTeams=lastTeamMode==='week'?buildWeeklyTeams():buildTeamsForDate(filtered(),adminBoss.value);
   renderTeams(lastTeams)
 };
+
+function collectConflicts(data){
+  const byDate=new Map();
+  if(lastTeamMode==='week'){
+    data.forEach(day=>{
+      const list=[]; day.teams.forEach(team=>team.forEach(m=>list.push(m)));
+      byDate.set(day.date,list);
+    });
+  }else{
+    const list=[]; data.forEach(team=>team.forEach(m=>list.push(m)));
+    byDate.set(adminDate.value,list);
+  }
+  const conflictMap=new Map();
+  byDate.forEach((members,date)=>{
+    const groups=new Map();
+    members.forEach(m=>{const k=accountKey(m); if(!k)return; if(!groups.has(k))groups.set(k,[]); groups.get(k).push(m);});
+    const bad=[...groups.entries()].filter(([k,v])=>v.length>1);
+    if(bad.length)conflictMap.set(date,new Map(bad));
+  });
+  return conflictMap;
+}
+function conflictSummary(conflicts){
+  if(!conflicts.size)return '';
+  let totalChars=0,totalGroups=0,lines=[];
+  conflicts.forEach((groups,date)=>{
+    groups.forEach((members,key)=>{
+      totalGroups++; totalChars+=members.length;
+      lines.push(`${date}：${members[0].accountGroup} 同一天 ${members.length} 隻（${members.map(m=>m.player).join('、')}）`);
+    });
+  });
+  return `<div class="conflict-summary">⚠ 分身衝突提醒：${totalGroups} 組 / ${totalChars} 角色<br>${lines.join('<br>')}</div>`;
+}
+function isConflictMember(m,date,conflicts){const k=accountKey(m);return !!(k&&conflicts.get(date)?.has(k));}
 function renderTeams(data){
   teamResult.classList.remove('empty');
   if(!data.length){teamResult.innerHTML='<div class="empty">目前沒有可編排的隊伍</div>';return}
+  const conflicts=collectConflicts(data);
+  const summary=conflictSummary(conflicts);
   if(lastTeamMode==='week'){
-    teamResult.innerHTML=data.map(day=>`<div class="day-block"><h2>${day.date}｜原報名 ${day.total} 筆｜可排 ${day.arranged} 人</h2>${day.teams.map((team,i)=>teamHTML(team,i,day.date)).join('')}</div>`).join('');
+    teamResult.innerHTML=summary+data.map(day=>`<div class="day-block"><h2>${day.date}｜原報名 ${day.total} 筆｜可排 ${day.arranged} 人</h2>${day.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts)).join('')}</div>`).join('');
   }else{
-    teamResult.innerHTML=data.map((team,i)=>teamHTML(team,i,adminDate.value)).join('');
+    teamResult.innerHTML=summary+data.map((team,i)=>teamHTML(team,i,adminDate.value,conflicts)).join('');
   }
 }
-function teamHTML(team,i,date){
+function teamHTML(team,i,date,conflicts=new Map()){
   const req=requirementStatus(team,adminBoss.value);
   const missing=req.filter(r=>r.missing>0);
   const reqText=req.length?`<div class="req-line">${req.map(r=>`${r.label} ${r.have}/${r.count}${r.missing?' 缺'+r.missing:''}`).join('｜')}</div>`:'';
   const missingText=missing.length?`<div class="missing-line">缺少：${missing.map(r=>`${r.label} ${r.missing}`).join('、')}</div>`:'';
-  return `<div class="team ${missing.length?'team-warning':''}"><h3>${adminBoss.value} ${date} 第 ${i+1} 隊｜${team.length}人</h3>${reqText}${missingText}${team.map((m,idx)=>`<div class="slot"><b>${idx+1}</b><div>${m.player}<div class="job">${m.group}｜${m.job}｜報名 ${signupTime(m)}</div></div><span>${tag(m)}</span></div>`).join('')}</div>`
+  return `<div class="team ${missing.length?'team-warning':''}"><h3>${adminBoss.value} ${date} 第 ${i+1} 隊｜${team.length}人</h3>${reqText}${missingText}${team.map((m,idx)=>{const c=isConflictMember(m,date,conflicts);return `<div class="slot ${c?'conflict':''}"><b>${idx+1}</b><div>${c?'<span class="conflict-dot">●</span>':''}${m.player}<div class="job">${m.group}｜${m.job}${displayAccount(m)}｜報名 ${signupTime(m)}</div></div><span>${tag(m)}</span></div>`}).join('')}</div>`
 }
 function tag(m){if(m.job==='黑騎')return '黑騎';if(m.job==='拳霸')return '拳';if(m.group==='弓箭手')return '弓';if(m.group==='法師')return '法';return '輸出'}
 copyTeams.onclick=async()=>{
@@ -248,8 +322,8 @@ copyTeams.onclick=async()=>{
   else txt=lastTeams.map((team,i)=>`${adminBoss.value} ${adminDate.value} 第${i+1}隊\n`+team.map((m,idx)=>`${idx+1}. ${m.player}｜${m.job}`).join('\n')).join('\n\n');
   await navigator.clipboard.writeText(txt);toast('已複製隊伍')
 };
-function renderAllData(){allData.innerHTML=state.signups.length?state.signups.slice().reverse().map(s=>`<div class="item"><b>${s.player}｜${s.job}</b><small>${s.cycle}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}</small></div>`).join(''):'<div class="empty">尚無資料</div>'}
-exportData.onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-signups.json';a.click();URL.revokeObjectURL(a.href)};
-importData.onchange=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=()=>{try{state=JSON.parse(r.result);save();toast('匯入成功')}catch{toast('匯入失敗')}};r.readAsText(file)};
-clearData.onclick=()=>{if(confirm('確定清除全部報名？')){state={signups:[]};save();toast('已清除')}};
+function renderAllData(){allData.innerHTML=state.signups.length?state.signups.slice().reverse().map(s=>`<div class="item"><b>${s.player}｜${s.job}${displayAccount(s)}</b><small>${s.cycle}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}</small></div>`).join(''):'<div class="empty">尚無資料</div>'}
+exportData.onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-signups-cloud.json';a.click();URL.revokeObjectURL(a.href)};
+importData.onchange=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=Array.isArray(data)?data:(data.signups||[]);const batch=writeBatch(db);arr.forEach(x=>{const item={...x,id:x.id||docIdForSignup(x),createdAt:x.createdAt||x.createdAtText||new Date().toISOString()};batch.set(doc(db,'signups',item.id),{...item,createdAtText:item.createdAt,createdAtServer:serverTimestamp()});});await batch.commit();toast('匯入成功')}catch(err){console.error(err);toast('匯入失敗')}};r.readAsText(file)};
+clearData.onclick=async()=>{if(confirm('確定清除 Firebase 全部報名？')){const snap=await getDocs(signupsCol);const batch=writeBatch(db);snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();toast('已清除')}};
 init();

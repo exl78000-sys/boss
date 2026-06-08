@@ -11,7 +11,7 @@
   <div class="app">
     <header class="topbar">
       <div>
-        <h1>Kingsman打王報名</h1>
+        <h1>打王報名</h1>
         <p id="currentCycleText">本週</p>
       </div>
       <button id="installBtn" class="ghost hidden">安裝</button>
@@ -33,7 +33,10 @@
 
         <div class="card">
           <label>玩家名稱</label>
-          <input id="playerName" type="text" placeholder="例如：早餐" autocomplete="nickname" />
+          <input id="playerName" type="text" placeholder="例如：Gon弩 / 小明主教" autocomplete="nickname" />
+          <label class="check-row mt"><input id="hasAlt" type="checkbox" /> <span>有分身 / 同帳號角色</span></label>
+          <input id="accountGroup" class="mt hidden" type="text" placeholder="本尊/帳號群組，例如：Gon" />
+          <p class="hint">有分身時請填同一個本尊/帳號群組；若同一天被排到多隻，隊伍會顯示橘燈提醒。</p>
         </div>
 
         <div class="card">
@@ -111,7 +114,8 @@
       <section id="dataPage" class="page">
         <div class="card">
           <h2>資料管理</h2>
-          <p class="hint">目前資料存在這台手機/電腦的瀏覽器。</p>
+          <p class="hint">目前資料已連接 Firebase Firestore，多人共用同一份報名資料。</p>
+          <p id="syncStatus" class="hint">同步狀態：連線中</p>
           <button id="exportData" class="primary full">匯出 JSON</button>
           <label class="importLabel mt">匯入 JSON
             <input id="importData" type="file" accept="application/json" />
@@ -127,6 +131,6 @@
 
     <div id="toast" class="toast hidden"></div>
   </div>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
