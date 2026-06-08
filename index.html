@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>打王報名隊伍編排</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <h1>打王報名</h1>
+        <p id="currentCycleText">本週</p>
+      </div>
+      <button id="installBtn" class="ghost hidden">安裝</button>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-page="signupPage">報名</button>
+      <button class="tab" data-page="rosterPage">名單</button>
+      <button class="tab" data-page="adminPage">後台</button>
+      <button class="tab" data-page="dataPage">資料</button>
+    </nav>
+
+    <main>
+      <section id="signupPage" class="page active">
+        <div class="card">
+          <label>報名週期，最多開放兩週</label>
+          <div id="cycleBtns" class="pill-grid"></div>
+        </div>
+
+        <div class="card">
+          <label>玩家名稱</label>
+          <input id="playerName" type="text" placeholder="例如：早餐 / 午餐 / 宵夜" autocomplete="nickname" />
+          <label class="check-row mt"><input id="hasAlt" type="checkbox" /> <span>有分身角色</span></label>
+          <input id="accountGroup" class="mt hidden" type="text" placeholder="分身群組名稱，例如：早餐" />
+          <p class="hint">若同一位玩家有多個角色，請填寫相同的分身群組名稱。例如：角色名稱「早餐 / 午餐 / 宵夜」，分身群組名稱都填「早餐」。同一天被排到多隻會顯示橘燈提醒；自動編隊不會把同分身群組排入同一隊。</p>
+        </div>
+
+        <div class="card">
+          <label>職業大類</label>
+          <div id="classGroupBtns" class="pill-grid"></div>
+          <label class="mt">職業</label>
+          <div id="jobBtns" class="job-grid"></div>
+        </div>
+
+        <div class="card">
+          <label>要打的王</label>
+          <div id="bossBtns" class="boss-grid"></div>
+        </div>
+
+        <div class="card">
+          <div class="row between">
+            <label>可參加日期，可複選</label>
+            <button id="selectAllDates" class="ghost small" type="button">日期全選</button>
+          </div>
+          <div id="dateChecks" class="date-grid"></div>
+        </div>
+
+        <button id="submitSignup" class="primary full">送出報名</button>
+
+        <div class="card">
+          <h2>取消報名</h2>
+          <p class="hint">輸入同一個玩家名稱後，可在下方刪除自己的報名。</p>
+          <button id="refreshMine" class="ghost full">查看我的報名</button>
+          <div id="mySignupList" class="list mt"></div>
+        </div>
+      </section>
+
+      <section id="rosterPage" class="page">
+        <div class="card">
+          <label>單獨查看報名名單</label>
+          <select id="rosterCycle"></select>
+          <div id="rosterBossBtns" class="boss-grid mt"></div>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h2 id="rosterTitle">報名名單</h2>
+            <span id="rosterCount" class="badge">0筆</span>
+          </div>
+          <div id="rosterList" class="list"></div>
+        </div>
+      </section>
+
+      <section id="adminPage" class="page">
+        <div class="card">
+          <label>後台篩選</label>
+          <select id="adminCycle"></select>
+          <select id="adminBoss" class="mt"></select>
+          <select id="adminDate" class="mt"></select>
+          <p class="hint">選「週期全部日期」會依照報名人數多的日期優先排，同玩家只會被排進一個日期。</p>
+          <button id="generateTeams" class="primary full mt">自動編排隊伍</button>
+        </div>
+
+        <div class="card">
+          <div class="row between">
+            <h2>報名名單</h2>
+            <span id="signupCount" class="badge">0筆</span>
+          </div>
+          <div id="signupList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <div class="row between">
+            <h2>隊伍結果</h2>
+            <button id="copyTeams" class="ghost">複製</button>
+          </div>
+          <div id="teamResult" class="team-result empty">尚未編排</div>
+        </div>
+      </section>
+
+      <section id="dataPage" class="page">
+        <div class="card">
+          <h2>資料管理</h2>
+          <p class="hint">目前資料已連接 Firebase Firestore，多人共用同一份報名資料。</p>
+          <p id="syncStatus" class="hint">同步狀態：連線中</p>
+          <button id="exportData" class="primary full">匯出 JSON</button>
+          <label class="importLabel mt">匯入 JSON
+            <input id="importData" type="file" accept="application/json" />
+          </label>
+          <button id="clearData" class="danger full mt">清除全部報名</button>
+        </div>
+        <div class="card">
+          <h2>全部報名</h2>
+          <div id="allData" class="list"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
