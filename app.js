@@ -36,6 +36,9 @@ function userMeta(){
     photoURL:currentUser.photoURL||''
   }:null;
 }
+function actorMeta(){
+  return currentUser?userMeta():{name:'訪客'};
+}
 
 function profileDocId(player){return encodeURIComponent(norm(player)).replace(/[.#$[\]/]/g,'_');}
 function profileFromForm(player){return {player,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};}
@@ -88,7 +91,7 @@ function renderAuth(){
   const admin=isAdmin();
   const label=logged?`已登入：${currentUser.displayName||currentUser.email||'Google 使用者'}${admin?'（管理者）':''}`:'未登入';
   if(E.authStatus)E.authStatus.textContent=label;
-  if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。只有管理者 exl78000@gmail.com 可訪問後台與資料頁。';
+  if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。可新增/修改未登入建立的角色；Google 登入建立的角色只有本人或管理者可修改。';
   [E.googleLoginBtn,E.googleLoginBtn2].forEach(b=>b&&b.classList.toggle('hidden',logged));
   [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&b.classList.toggle('hidden',!logged));
   renderMyCharacterSelect();
@@ -136,9 +139,52 @@ function initFirebase(){
     },err=>{console.error(err);setStatus('Firestore 連線失敗，請檢查規則','sync-bad');});
   }catch(err){console.error(err);setStatus('Firebase 初始化失敗','sync-bad');}
 }
-async function addSignup(item){if(!signupsRef){toast('Firebase 尚未連線');return false;}await signupsRef.doc(docId(item)).set(item);return true;}
-async function deleteSignupObj(s){if(!signupsRef||!s)return;await signupsRef.doc(s.id||docId(s)).delete();}
-async function updateSignupObj(s,patch){if(!signupsRef||!s)return;await signupsRef.doc(s.id||docId(s)).update(patch);}
+function signupOwnerUid(s){return s?.ownerUid||s?.createdBy?.uid||'';}
+function canEditSignup(s){
+  if(isAdmin())return true;
+  const owner=signupOwnerUid(s);
+  if(owner)return !!(currentUser&&owner===currentUser.uid);
+  return true; // 未登入建立或舊資料：輸入同角色名稱即可修改。
+}
+function playerLockedByOther(player){
+  const key=norm(player);
+  if(!key||isAdmin())return false;
+  return state.signups.some(s=>norm(s.player)===key&&!canEditSignup(s));
+}
+function requireLoginForWrite(){return true;}
+function deniedEditToast(){toast('此角色資料已由其他 Google 帳號建立，只有本人或管理者可以修改');}
+async function addSignup(item){
+  if(!signupsRef){toast('Firebase 尚未連線');return false;}
+  if(playerLockedByOther(item.player)){deniedEditToast();return false;}
+  if(currentUser){
+    item.ownerUid=currentUser.uid;
+    item.ownerEmail=currentUser.email||'';
+    delete item.guestOwnerToken;
+  }else{
+    delete item.guestOwnerToken;
+    item.ownerUid='';
+    item.ownerEmail='';
+  }
+  item.createdBy=item.createdBy||actorMeta();
+  item.updatedBy=actorMeta();
+  await signupsRef.doc(docId(item)).set(item);
+  return true;
+}
+async function deleteSignupObj(s){
+  if(!signupsRef||!s)return false;
+  if(!canEditSignup(s)){deniedEditToast();return false;}
+  await signupsRef.doc(s.id||docId(s)).delete();
+  return true;
+}
+async function updateSignupObj(s,patch){
+  if(!signupsRef||!s)return false;
+  if(!canEditSignup(s)){deniedEditToast();return false;}
+  const next={...patch,updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
+  if(!s.ownerUid&&signupOwnerUid(s))next.ownerUid=signupOwnerUid(s);
+  if(!s.ownerEmail&&s.createdBy?.email)next.ownerEmail=s.createdBy.email;
+  await signupsRef.doc(s.id||docId(s)).update(next);
+  return true;
+}
 
 function init(){
   selectedCycle=cycles()[0].id;
@@ -238,7 +284,9 @@ async function submitSignup(){
   const name=E.playerName.value.trim();
   const dates=[...E.dateChecks.querySelectorAll('input:checked')].map(x=>x.value);
   if(!name)return toast('請輸入玩家名稱');
+  if(!requireLoginForWrite())return;
   if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
+  if(playerLockedByOther(name)){deniedEditToast();return;}
   const patch=currentProfilePatch();
 
   // 沒有勾日期時，若這個玩家本週已報名，按送出就更新既有報名資料。
@@ -262,16 +310,16 @@ async function submitSignup(){
   // 綠燈保留/更新，取消勾選的日期會自動取消。
   if(existingForBoss.length){
     for(const s of existingForBoss){
-      if(!selectedSet.has(s.date)){await deleteSignupObj(s);removed++;}
+      if(!selectedSet.has(s.date)){if(await deleteSignupObj(s))removed++;}
     }
   }
 
   for(const date of dates){
-    const item={cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:userMeta(),updatedAt:new Date().toISOString(),updatedBy:userMeta()};
+    const item={cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:actorMeta(),updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
     const existing=state.signups.find(s=>signupKey(s)===signupKey(item));
-    if(existing){await updateSignupObj(existing,patch);changed++;continue;}
+    if(existing){if(await updateSignupObj(existing,patch))changed++;continue;}
     item.id=docId(item);
-    await addSignup(item);added++;
+    if(await addSignup(item))added++;
   }
   await saveMyCharacterProfile(name);
   E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);E.selectAllDates.textContent='日期全選';
@@ -284,12 +332,14 @@ async function submitSignup(){
 function findSignup(player,cycle,boss,date){return state.signups.find(s=>norm(s.player)===norm(player)&&s.cycle===cycle&&s.boss===boss&&s.date===date);}
 async function toggleMineDate(boss,date){
   const name=E.playerName.value.trim(); if(!name)return toast('請輸入玩家名稱');
+  if(!requireLoginForWrite())return;
+  if(playerLockedByOther(name)){deniedEditToast();return;}
   const exists=findSignup(name,selectedCycle,boss,date);
-  if(exists){if(confirm(`取消 ${boss} ${date} 報名？`)){await deleteSignupObj(exists);toast('已取消報名');}}
+  if(exists){if(confirm(`取消 ${boss} ${date} 報名？`)){if(await deleteSignupObj(exists))toast('已取消報名');}}
   else{
     if(confirm(`加入 ${boss} ${date} 報名？`)){
       if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
-      const item={cycle:selectedCycle,boss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:userMeta(),updatedAt:new Date().toISOString(),updatedBy:userMeta()}; item.id=docId(item); await addSignup(item); await saveMyCharacterProfile(name); toast('已加入報名');
+      const item={cycle:selectedCycle,boss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:actorMeta(),updatedAt:new Date().toISOString(),updatedBy:actorMeta()}; item.id=docId(item); await addSignup(item); await saveMyCharacterProfile(name); toast('已加入報名');
     }
   }
 }
@@ -297,6 +347,7 @@ function settingSummaryFromForm(){return `${selectedGroup}｜${selectedJob}${E.h
 function settingSummaryFromSignup(s){return `${s?.group||'未填'}｜${s?.job||'未填'}${s?.hasAlt?`｜分身群組 ${html(s.accountGroup||'未填')}`:'｜無分身群組'}`;}
 async function applyCurrentSettingToMine(scopeBoss){
   const name=E.playerName.value.trim(); if(!name)return toast('請輸入玩家名稱');
+  if(!requireLoginForWrite())return;
   if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
   const targets=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle&&(!scopeBoss||s.boss===scopeBoss));
   if(!targets.length)return toast('沒有可更新的報名');
