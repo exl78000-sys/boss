@@ -422,8 +422,45 @@ function renderAllData(){
   arr.forEach(s=>{const key=s.player||'未命名'; if(!by.has(key))by.set(key,[]); by.get(key).push(s);});
   E.allData.innerHTML=[...by.entries()].map(([player,list])=>{
     const first=list[0]||{};
-    return `<details class="data-player"><summary class="item"><b>${html(player)}</b><small>${list.length} 筆｜${html(first.group||'')}｜${html(first.job||'')}${displayAccount(first)}</small></summary><div class="nested-list">${list.map(s=>`<div class="item subitem"><b>${html(s.cycle)}｜${html(s.boss)}｜${html(s.date)}</b><small>${html(s.group||'')}｜${html(s.job||'')}${displayAccount(s)}｜報名 ${signupTime(s)}${s.createdBy&&s.createdBy.email?`｜Google ${html(s.createdBy.email)}`:''}</small></div>`).join('')}</div></details>`;
+    const locked=!!signupOwnerUid(first);
+    const playerId=html(player);
+    const rows=list.map(s=>{
+      const id=html(s.id||docId(s));
+      return `<div class="item subitem"><b>${html(s.cycle)}｜${html(s.boss)}｜${html(s.date)}</b><small>${html(s.group||'')}｜${html(s.job||'')}${displayAccount(s)}｜報名 ${signupTime(s)}${s.createdBy&&s.createdBy.email?`｜Google ${html(s.createdBy.email)}`:''}</small><button class="danger small mt" type="button" onclick="adminDeleteSignupById('${id}')">刪除此筆報名</button></div>`;
+    }).join('');
+    return `<details class="data-player"><summary class="item"><b>${playerId}</b><small>${list.length} 筆｜${html(first.group||'')}｜${html(first.job||'')}${displayAccount(first)}${first.ownerEmail?`｜綁定 ${html(first.ownerEmail)}`:'｜未綁定帳號'}</small></summary><div class="nested-list"><div class="item subitem"><button class="ghost small" type="button" onclick="adminUnlinkPlayer('${playerId}')" ${locked?'':'disabled'}>解除角色帳戶連結</button><small>${locked?'解除後此角色會變成未綁定，未登入者可用角色名稱修改。':'此角色目前未綁定 Google 帳號。'}</small></div>${rows}</div></details>`;
   }).join('');
+}
+
+async function adminDeleteSignupById(id){
+  if(!isAdmin())return toast('只有管理者可刪除報名');
+  if(!signupsRef)return toast('Firebase 尚未連線');
+  const s=state.signups.find(x=>(x.id||docId(x))===id);
+  const label=s?`${s.player}｜${s.boss}｜${s.date}`:id;
+  if(!confirm(`確定刪除這筆報名？\n${label}`))return;
+  await signupsRef.doc(id).delete();
+  toast('已刪除單筆報名');
+}
+
+async function adminUnlinkPlayer(player){
+  if(!isAdmin())return toast('只有管理者可解除連結');
+  if(!signupsRef)return toast('Firebase 尚未連線');
+  const list=state.signups.filter(s=>norm(s.player)===norm(player));
+  if(!list.length)return toast('找不到此角色報名資料');
+  if(!confirm(`確定解除「${player}」的 Google 帳號連結？\n此角色所有報名都會變成未綁定。`))return;
+  const batch=db.batch();
+  list.forEach(s=>{
+    batch.update(signupsRef.doc(s.id||docId(s)),{
+      ownerUid:'',
+      ownerEmail:'',
+      claimedAt:'',
+      claimedBy:null,
+      updatedAt:new Date().toISOString(),
+      updatedBy:actorMeta()
+    });
+  });
+  await batch.commit();
+  toast('已解除角色帳戶連結');
 }
 
 
@@ -711,5 +748,7 @@ function exportJson(){if(!isAdmin())return toast('只有管理者可匯出資料
 function importJson(e){if(!isAdmin())return toast('只有管理者可匯入資料');const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=data.signups||[];for(const s of arr){s.id=s.id||docId(s);await addSignup(s);}toast('匯入完成');}catch{toast('匯入失敗');}};r.readAsText(file);}
 async function clearAll(){if(!isAdmin())return toast('只有管理者可清除資料');if(!signupsRef)return toast('Firebase 尚未連線');if(!confirm('確定清除全部報名？'))return;const snap=await signupsRef.get();const batch=db.batch();snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();toast('已清除');}
 
+window.adminDeleteSignupById=adminDeleteSignupById;
+window.adminUnlinkPlayer=adminUnlinkPlayer;
 window.addEventListener('DOMContentLoaded',init);
 })();
