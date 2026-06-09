@@ -5,11 +5,13 @@ const firebaseConfig={apiKey:"AIzaSyD5L4tp6vnjgHOIM7aEWx3fd8D2KdOb6WI",authDomai
 const bosses=[{name:'龍王',limit:12},{name:'困拉',limit:6},{name:'炎魔',limit:6},{name:'普拉',limit:6}];
 const bossOrder=['龍王','困拉','炎魔','普拉'];
 const jobs={劍士:['黑騎','英雄','聖騎士'],弓箭手:['弩手','弓手'],盜賊:['標賊','刀賊'],海盜:['槍手','拳霸'],法師:['主教','冰雷','火毒']};
+const ADMIN_EMAILS=['exl78000@gmail.com'];
 const $=id=>document.getElementById(id);
 const E={};
-['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','hasAlt','accountGroup','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','exportData','importData','clearData','syncStatus','toast'].forEach(id=>E[id]=$(id));
+['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','hasAlt','accountGroup','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
 
-let db=null, signupsRef=null, state={signups:[]};
+let db=null, auth=null, signupsRef=null, state={signups:[]};
+let currentUser=null;
 let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
 let lastProfileLoadedFor='';
 let autoFillDateSet=null;
@@ -26,6 +28,51 @@ function cycleDates(cycleId){const c=cycles().find(x=>x.id===cycleId)||cycles()[
 function dateOrder(label,cycleId=selectedCycle){return cycleDates(cycleId).indexOf(label);}
 function toast(msg){if(!E.toast)return alert(msg);E.toast.textContent=msg;E.toast.classList.remove('hidden');setTimeout(()=>E.toast.classList.add('hidden'),2200);}
 function setStatus(msg,cls='sync-warn'){if(E.syncStatus){E.syncStatus.textContent='同步狀態：'+msg;E.syncStatus.className='hint '+cls;}}
+function userMeta(){
+  return currentUser?{
+    uid:currentUser.uid,
+    email:currentUser.email||'',
+    name:currentUser.displayName||'',
+    photoURL:currentUser.photoURL||''
+  }:null;
+}
+
+function isAdmin(){return !!(currentUser&&ADMIN_EMAILS.includes(String(currentUser.email||'').toLowerCase()));}
+function activePageId(){return document.querySelector('.page.active')?.id||'signupPage';}
+function setActivePage(pageId){
+  document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('active'));
+  const tab=document.querySelector(`.tab[data-page="${pageId}"]`);
+  const page=$(pageId);
+  if(tab)tab.classList.add('active');
+  if(page)page.classList.add('active');
+}
+function applyAdminAccess(){
+  const admin=isAdmin();
+  document.querySelectorAll('.tab[data-page="adminPage"],.tab[data-page="dataPage"]').forEach(el=>{
+    el.classList.toggle('hidden',!admin);
+    el.disabled=!admin;
+  });
+  ['adminPage','dataPage'].forEach(id=>{const page=$(id); if(page)page.classList.toggle('admin-locked',!admin);});
+  if(!admin&&(activePageId()==='adminPage'||activePageId()==='dataPage'))setActivePage('signupPage');
+}
+function renderAuth(){
+  const logged=!!currentUser;
+  const admin=isAdmin();
+  const label=logged?`已登入：${currentUser.displayName||currentUser.email||'Google 使用者'}${admin?'（管理者）':''}`:'未登入';
+  if(E.authStatus)E.authStatus.textContent=label;
+  if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。只有管理者 exl78000@gmail.com 可訪問後台與資料頁。';
+  [E.googleLoginBtn,E.googleLoginBtn2].forEach(b=>b&&b.classList.toggle('hidden',logged));
+  [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&b.classList.toggle('hidden',!logged));
+  applyAdminAccess();
+}
+
+function signInGoogle(){
+  if(!auth)return toast('Firebase Auth 尚未載入');
+  const provider=new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(err=>{console.error(err);toast('Google 登入失敗，請確認 Firebase 已啟用 Google 登入');});
+}
+function signOutGoogle(){if(auth)auth.signOut();}
+
 function signupKey(s){return `${norm(s.player)}|${s.cycle}|${s.boss}|${s.date}`;}
 function docId(s){return encodeURIComponent(signupKey(s)).replace(/[.#$[\]/]/g,'_');}
 function timeValue(s){const t=new Date(s.createdAt||0).getTime();return Number.isFinite(t)?t:0;}
@@ -46,6 +93,12 @@ function initFirebase(){
     if(!window.firebase||!firebase.firestore){setStatus('Firebase SDK 未載入，請重新整理','sync-bad');return;}
     if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);
     db=firebase.firestore();
+    if(firebase.auth){
+      auth=firebase.auth();
+      auth.onAuthStateChanged(user=>{currentUser=user;renderAuth();renderAll();});
+    }else{
+      renderAuth();
+    }
     signupsRef=db.collection('signups');
     signupsRef.onSnapshot(snap=>{
       state.signups=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -60,12 +113,14 @@ async function updateSignupObj(s,patch){if(!signupsRef||!s)return;await signupsR
 
 function init(){
   selectedCycle=cycles()[0].id;
-  bindTabs();bindActions();renderSignup();renderAll();initFirebase();
+  bindTabs();bindActions();renderSignup();renderAuth();renderAll();initFirebase();
   let deferred;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;E.installBtn?.classList.remove('hidden');});
   if(E.installBtn)E.installBtn.onclick=()=>deferred&&deferred.prompt();
 }
-function bindTabs(){document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.page).classList.add('active');renderAll();}));}
+function bindTabs(){document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{if((b.dataset.page==='adminPage'||b.dataset.page==='dataPage')&&!isAdmin()){toast('只有管理者可訪問後台與資料頁');return;}document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.page).classList.add('active');renderAll();}));}
 function bindActions(){
+  [E.googleLoginBtn,E.googleLoginBtn2].forEach(b=>b&&(b.onclick=signInGoogle));
+  [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&(b.onclick=signOutGoogle));
   E.hasAlt.onchange=()=>{E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);if(!E.hasAlt.checked)E.accountGroup.value='';};
   E.playerName.addEventListener('input',()=>{
     const loaded=autoFillProfileByName();
@@ -102,13 +157,14 @@ function renderSignup(){
 }
 function fillCycleSelect(el){el.innerHTML=cycles().map(c=>`<option value="${c.id}" ${c.id===selectedCycle?'selected':''}>${c.id}</option>`).join('');}
 function renderAll(){
+  applyAdminAccess();
   fillCycleSelect(E.adminCycle);fillCycleSelect(E.rosterCycle);
   E.adminBoss.innerHTML=bosses.map(b=>`<option>${b.name}</option>`).join('');
   E.adminDate.innerHTML=['週期全部日期',...cycleDates(E.adminCycle.value||selectedCycle)].map(v=>`<option>${v}</option>`).join('');
   renderRoster();renderAdminList();renderAllData();renderMine();
 }
 function currentProfilePatch(){
-  return {group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():''};
+  return {group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};
 }
 function autoFillProfileByName(){
   const name=E.playerName.value.trim();
@@ -168,7 +224,7 @@ async function submitSignup(){
   }
 
   for(const date of dates){
-    const item={cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString()};
+    const item={cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:userMeta(),updatedAt:new Date().toISOString(),updatedBy:userMeta()};
     const existing=state.signups.find(s=>signupKey(s)===signupKey(item));
     if(existing){await updateSignupObj(existing,patch);changed++;continue;}
     item.id=docId(item);
@@ -189,7 +245,7 @@ async function toggleMineDate(boss,date){
   else{
     if(confirm(`加入 ${boss} ${date} 報名？`)){
       if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
-      const item={cycle:selectedCycle,boss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString()}; item.id=docId(item); await addSignup(item); toast('已加入報名');
+      const item={cycle:selectedCycle,boss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:userMeta(),updatedAt:new Date().toISOString(),updatedBy:userMeta()}; item.id=docId(item); await addSignup(item); toast('已加入報名');
     }
   }
 }
@@ -253,243 +309,17 @@ function renderAdminList(){
   E.signupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${html(s.player)}</b><small>${s.job}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}${displayAccount(s)}</small></div>`).join(''):'<div class="empty">目前沒有人報名</div>';
 }
 function renderAllData(){
-  if(!state.signups.length){
-    E.allData.innerHTML='<div class="empty">尚無資料</div>';
-    return;
-  }
-  const byPlayer=new Map();
-  state.signups.forEach(s=>{
-    const key=norm(s.player);
-    if(!byPlayer.has(key))byPlayer.set(key,{player:s.player,latest:0,items:[]});
-    const group=byPlayer.get(key);
-    group.items.push(s);
-    group.latest=Math.max(group.latest,timeValue(s));
-  });
-  const players=[...byPlayer.values()].sort((a,b)=>a.player.localeCompare(b.player,'zh-Hant')||b.latest-a.latest);
-  E.allData.innerHTML=players.map(p=>{
-    const items=p.items.slice().sort((a,b)=>a.cycle.localeCompare(b.cycle)||a.boss.localeCompare(b.boss,'zh-Hant')||dateOrder(a.date,a.cycle)-dateOrder(b.date,b.cycle)||timeValue(a)-timeValue(b));
-    const latest=items.slice().sort((a,b)=>timeValue(b)-timeValue(a))[0]||{};
-    return `<details class="data-player"><summary class="item clickable"><b>${html(p.player)}</b><small>${items.length} 筆｜${latest.job?html(latest.group)+'｜'+html(latest.job):''}${displayAccount(latest)}</small></summary><div class="nested-list">${items.map(s=>`<div class="item subitem"><b>${html(s.boss)}｜${html(s.date)}</b><small>${html(s.cycle)}｜${html(s.group)}｜${html(s.job)}｜報名 ${signupTime(s)}${displayAccount(s)}</small></div>`).join('')}</div></details>`;
+  if(!isAdmin()){if(E.allData)E.allData.innerHTML='<div class="empty">只有管理者可查看資料頁</div>';return;}
+  const arr=state.signups.slice().sort((a,b)=>String(a.player).localeCompare(String(b.player),'zh-Hant')||a.cycle.localeCompare(b.cycle)||a.boss.localeCompare(b.boss,'zh-Hant')||dateOrder(a.date,a.cycle)-dateOrder(b.date,b.cycle));
+  if(!arr.length){E.allData.innerHTML='<div class="empty">尚無資料</div>';return;}
+  const by=new Map();
+  arr.forEach(s=>{const key=s.player||'未命名'; if(!by.has(key))by.set(key,[]); by.get(key).push(s);});
+  E.allData.innerHTML=[...by.entries()].map(([player,list])=>{
+    const first=list[0]||{};
+    return `<details class="data-player"><summary class="item"><b>${html(player)}</b><small>${list.length} 筆｜${html(first.group||'')}｜${html(first.job||'')}${displayAccount(first)}</small></summary><div class="nested-list">${list.map(s=>`<div class="item subitem"><b>${html(s.cycle)}｜${html(s.boss)}｜${html(s.date)}</b><small>${html(s.group||'')}｜${html(s.job||'')}${displayAccount(s)}｜報名 ${signupTime(s)}${s.createdBy&&s.createdBy.email?`｜Google ${html(s.createdBy.email)}`:''}</small></div>`).join('')}</div></details>`;
   }).join('');
 }
 
-function reqSlots(boss){
-  if(boss==='龍王')return [{label:'黑騎',fn:isDK,count:2,prefer:['黑騎']},{label:'弓箭手',fn:isArcher,count:2,prefer:['弩手','弓手']},{label:'拳霸',fn:isBucc,count:1,prefer:['拳霸']}];
-  if(boss==='困拉')return [{label:'黑騎',fn:isDK,count:1,prefer:['黑騎']},{label:'弓箭手',fn:isArcher,count:1,prefer:['弓手','弩手']},{label:'法師',fn:isMage,count:2,prefer:['主教','冰雷|火毒']}];
-  if(boss==='炎魔')return [{label:'黑騎',fn:isDK,count:1,prefer:['黑騎']},{label:'弓箭手',fn:isArcher,count:1,prefer:['弩手','弓手']},{label:'法師',fn:isMage,count:1,prefer:['主教','冰雷|火毒']}];
-  if(boss==='普拉')return [{label:'法師',fn:isMage,count:1,prefer:['主教|冰雷|火毒'],soft:true},{label:'弓箭手',fn:isArcher,count:1,prefer:['弩手|弓手'],soft:true}];
-  return [];
-}
-function memberCanJoinTeam(team,m){const ak=accountKey(m);if(!ak)return !team.some(x=>identity(x)===identity(m));return !team.some(x=>accountKey(x)===ak||identity(x)===identity(m));}
-function pickOne(pool,team,predicate){const i=pool.findIndex(x=>predicate(x)&&memberCanJoinTeam(team,x));return i>=0?pool.splice(i,1)[0]:null;}
-function pickByJobs(pool,team,jobspec,baseFn){
-  const opts=jobspec.split('|');
-  return pickOne(pool,team,x=>(!baseFn||baseFn(x))&&opts.includes(x.job));
-}
-function fillRequirement(team,pool,slot){
-  for(let i=0;i<slot.count;i++){
-    let m=null;
-    for(const pref of slot.prefer||[]){m=pickByJobs(pool,team,pref,slot.fn);if(m)break;}
-    if(!m)m=pickOne(pool,team,slot.fn);
-    if(m)team.push(m);
-  }
-}
-function jobCount(team,job){return team.filter(x=>x.job===job).length;}
-function outputPriority(boss,x){
-  if(boss==='龍王'){if(x.group==='劍士'||x.job==='刀賊'||x.job==='拳霸')return 0;if(x.group==='弓箭手')return 1;if(x.group==='法師')return 2;if(x.job==='槍手'||x.job==='標賊')return 3;return 4;}
-  if(boss==='困拉'){if(x.job==='槍手'||x.job==='弓手')return 0;if(x.group==='盜賊'||x.group==='劍士'||x.job==='拳霸')return 1;if(x.group==='法師')return 2;return 3;}
-  if(boss==='炎魔'){if(x.job==='弩手'||x.job==='槍手')return 0;if(x.group==='劍士'||x.job==='標賊'||x.job==='弓手')return 1;if(x.group==='法師')return 2;return 3;}
-  if(boss==='普拉'){if(x.group==='法師')return 0;if(x.group==='弓箭手')return 1;return 2;}return 9;
-}
-function mageLimitBoss(boss){return ['困拉','炎魔','普拉'].includes(boss);}
-function mageCountIn(team){return team.filter(isMage).length;}
-function candidateAllowedByMageCap(team,m,boss){
-  // 困拉、炎魔、普拉：法師上限 2 位。
-  // 若已經有 2 位法師，只有在其他可選職業都篩完、剩下法師時，才允許第 3 位法師。
-  if(!mageLimitBoss(boss))return true;
-  if(!isMage(m))return true;
-  return mageCountIn(team)<2;
-}
-function fillTeam(team,pool,boss,limit){
-  while(team.length<limit){
-    const base=pool.filter(x=>memberCanJoinTeam(team,x));
-    if(!base.length)break;
-    let candidates=base.filter(x=>candidateAllowedByMageCap(team,x,boss));
-    // 若剩餘可用角色全是法師，才放寬法師上限，讓隊伍可補滿或列出更接近成團的未成團隊伍。
-    if(!candidates.length && base.every(isMage))candidates=base;
-    if(!candidates.length)break;
-    candidates.sort((a,b)=>{
-      const ac=jobCount(team,a.job),bc=jobCount(team,b.job);
-      if(ac!==bc)return ac-bc;
-      const ap=outputPriority(boss,a),bp=outputPriority(boss,b);
-      if(ap!==bp)return ap-bp;
-      return byTime(a,b);
-    });
-    const m=candidates[0]; pool.splice(pool.indexOf(m),1); team.push(m);
-  }
-}
-function reqUnits(boss){
-  // 需求以「單一位置」展開，避免同一分身群組的輸出角色先卡掉必要職業。
-  // 例如同群組有刀賊與弓手時，若隊伍缺弓箭手，會優先選弓手而不是刀賊。
-  if(boss==='龍王')return [
-    {label:'黑騎',fn:isDK,prefer:['黑騎']},
-    {label:'黑騎',fn:isDK,prefer:['黑騎']},
-    {label:'弓箭手',fn:isArcher,prefer:['弩手','弓手']},
-    {label:'弓箭手',fn:isArcher,prefer:['弓手','弩手']},
-    {label:'拳霸',fn:isBucc,prefer:['拳霸']}
-  ];
-  if(boss==='困拉')return [
-    {label:'黑騎',fn:isDK,prefer:['黑騎']},
-    {label:'弓箭手',fn:isArcher,prefer:['弓手','弩手']},
-    {label:'法師',fn:isMage,prefer:['主教','冰雷|火毒']},
-    {label:'法師',fn:isMage,prefer:['冰雷|火毒','主教']}
-  ];
-  if(boss==='炎魔')return [
-    {label:'黑騎',fn:isDK,prefer:['黑騎']},
-    {label:'弓箭手',fn:isArcher,prefer:['弩手','弓手']},
-    {label:'法師',fn:isMage,prefer:['主教','冰雷|火毒']}
-  ];
-  return [];
-}
-function prefIndex(unit,m){
-  if(!unit.fn(m))return 999;
-  for(let i=0;i<(unit.prefer||[]).length;i++){
-    const opts=unit.prefer[i].split('|');
-    if(opts.includes(m.job))return i;
-  }
-  return (unit.prefer||[]).length+1;
-}
-function assignmentScore(team,units){
-  // 分數越大越好：先比必要職業完成數，再比職業細部優先，再比職業多樣性，最後比報名時間。
-  let pref=0,time=0;
-  team.forEach((m,i)=>{pref+=100-prefIndex(units[i],m)*20; time-=timeValue(m)/1000000000000;});
-  const diversity=new Set(team.map(x=>x.job)).size;
-  return team.length*100000 + pref*100 + diversity*10 + time;
-}
-function buildRequirementTeam(pool,boss){
-  const units=reqUnits(boss);
-  if(!units.length)return [];
-  let best=[];
-  let bestScore=-Infinity;
-  const candidateLists=units.map(unit=>pool.filter(unit.fn).sort((a,b)=>prefIndex(unit,a)-prefIndex(unit,b)||byTime(a,b)).slice(0,18));
-  function dfs(idx,chosen){
-    if(idx>=units.length){
-      const sc=assignmentScore(chosen,units);
-      if(sc>bestScore){bestScore=sc;best=chosen.slice();}
-      return;
-    }
-    // 先嘗試能滿足此必要位置的角色。
-    for(const m of candidateLists[idx]){
-      if(chosen.includes(m))continue;
-      if(!memberCanJoinTeam(chosen,m))continue;
-      chosen.push(m);
-      dfs(idx+1,chosen);
-      chosen.pop();
-    }
-    // 允許不足，讓未成團區仍能顯示「接近成團」的隊伍與缺少項目。
-    dfs(idx+1,chosen);
-  }
-  dfs(0,[]);
-  return best;
-}
-function fillSoftPreference(team,pool,boss){
-  if(boss!=='普拉')return;
-  // 普拉法師、弓箭手平等，優先但非必需。
-  const soft=[{fn:isMage},{fn:isArcher}];
-  soft.forEach(s=>{const m=pickOne(pool,team,s.fn);if(m)team.push(m);});
-}
-function requirementFulfillmentScore(team,boss){
-  // 分數只看硬性必要職業是否被滿足；用來避免分身群組內的輸出角色卡掉必要職業。
-  // 例如同分身群組有「刀賊」與「弓手」，隊伍缺弓箭手時會用弓手替換刀賊。
-  let score=0;
-  reqSlots(boss).filter(r=>!r.soft).forEach(r=>{
-    const have=team.filter(r.fn).length;
-    score += Math.min(have,r.count)*1000;
-    score -= Math.max(0,r.count-have)*10000;
-  });
-  score += new Set(team.map(x=>x.job)).size*5;
-  score += team.length;
-  return score;
-}
-function teamHasGroupConflict(team){
-  const ids=new Set(),groups=new Set();
-  for(const m of team){
-    const id=identity(m);
-    if(ids.has(id))return true;
-    ids.add(id);
-    const ak=accountKey(m);
-    if(ak){if(groups.has(ak))return true;groups.add(ak);}
-  }
-  return false;
-}
-function optimizeRequiredAlternates(team,available,boss){
-  // 修正分身優先權：同分身群組內如果有角色可補必要缺口，必須優先選必要職業，
-  // 而不是讓輸出職業先佔住該分身群組位置。
-  const limit=bossLimit(boss);
-  let guard=0;
-  while(guard++<20){
-    const missing=reqSlots(boss).filter(r=>!r.soft&&r.count>team.filter(r.fn).length);
-    if(!missing.length)break;
-    const currentScore=requirementFulfillmentScore(team,boss);
-    let best=null;
-    for(const slot of missing){
-      const candidates=available
-        .filter(c=>slot.fn(c)&&!team.some(t=>identity(t)===identity(c)))
-        .sort((a,b)=>{
-          const ai=(slot.prefer||[]).findIndex(p=>p.split('|').includes(a.job));
-          const bi=(slot.prefer||[]).findIndex(p=>p.split('|').includes(b.job));
-          const ap=ai<0?99:ai,bp=bi<0?99:bi;
-          return ap-bp||byTime(a,b);
-        });
-      for(const c of candidates){
-        if(memberCanJoinTeam(team,c)&&team.length<limit){
-          const nt=team.concat([c]);
-          const sc=requirementFulfillmentScore(nt,boss);
-          if(sc>currentScore&&(!best||sc>best.score)){best={type:'add',candidate:c,score:sc};}
-        }
-        for(let i=0;i<team.length;i++){
-          const nt=team.slice();
-          nt[i]=c;
-          if(teamHasGroupConflict(nt))continue;
-          const sc=requirementFulfillmentScore(nt,boss);
-          // 同分時，優先替換非必要職業、較晚報名或輸出順位較低者。
-          const replaced=team[i];
-          const tieBreak=(slot.fn(replaced)?0:100) + outputPriority(boss,replaced)*10 + timeValue(replaced)/1000000000000;
-          if(sc>currentScore&&(!best||sc>best.score||(sc===best.score&&tieBreak>(best.tieBreak||0)))){
-            best={type:'replace',index:i,candidate:c,score:sc,tieBreak};
-          }
-        }
-      }
-    }
-    if(!best)break;
-    if(best.type==='add')team.push(best.candidate);
-    else team[best.index]=best.candidate;
-  }
-  return team;
-}
-function buildTeam(available,boss){
-  const pool=available.slice().sort(byTime); const team=[]; const limit=bossLimit(boss);
-  const reqTeam=buildRequirementTeam(pool,boss);
-  reqTeam.forEach(m=>{const i=pool.indexOf(m); if(i>=0){team.push(m); pool.splice(i,1);}});
-  fillSoftPreference(team,pool,boss);
-  fillTeam(team,pool,boss,limit);
-  optimizeRequiredAlternates(team,available,boss);
-  return team;
-}
-function reqStatus(team,boss){return reqSlots(boss).map(r=>{const have=team.filter(r.fn).length;return {...r,have,missing:Math.max(0,r.count-have)};});}
-function complete(team,boss){return team.length===bossLimit(boss)&&reqStatus(team,boss).filter(r=>!r.soft).every(r=>r.missing===0);}
-function unformedReason(members,boss,team=buildTeam(members,boss)){
-  const reasons=[]; const limit=bossLimit(boss); if(team.length<limit)reasons.push(`人數不足（${team.length}/${limit}）`);
-  reqStatus(team,boss).filter(r=>!r.soft&&r.missing>0).forEach(r=>reasons.push(`缺少${r.label} ${r.missing}`));
-  return reasons.length?reasons:['條件不足'];
-}
-function usageCanUse(m,date,boss,usage){
-  if(usage.players.has(identity(m)))return false;
-  const ak=accountKey(m); if(!ak)return true;
-  const g=usage.groups.get(`${date}|${ak}`); if(!g)return true;
-  if(boss==='普拉')return !g.lock && g.pap<2;
-  return false;
-}
 function markUse(m,date,boss,usage){
   usage.players.add(identity(m));
   const ak=accountKey(m); if(!ak)return;
@@ -604,9 +434,9 @@ async function copyTeams(){
   const txt=(lastTeams.formed||[]).map((f,i)=>`${f.boss} ${f.date} 第${i+1}隊\n${f.team.map((m,n)=>`${n+1}. ${m.player}｜${m.job}`).join('\n')}`).join('\n\n');
   await navigator.clipboard.writeText(txt||'沒有成團'); toast('已複製隊伍');
 }
-function exportJson(){const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-signups.json';a.click();URL.revokeObjectURL(a.href);}
-function importJson(e){const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=data.signups||[];for(const s of arr){s.id=s.id||docId(s);await addSignup(s);}toast('匯入完成');}catch{toast('匯入失敗');}};r.readAsText(file);}
-async function clearAll(){if(!signupsRef)return toast('Firebase 尚未連線');if(!confirm('確定清除全部報名？'))return;const snap=await signupsRef.get();const batch=db.batch();snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();toast('已清除');}
+function exportJson(){if(!isAdmin())return toast('只有管理者可匯出資料');const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-signups.json';a.click();URL.revokeObjectURL(a.href);}
+function importJson(e){if(!isAdmin())return toast('只有管理者可匯入資料');const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=data.signups||[];for(const s of arr){s.id=s.id||docId(s);await addSignup(s);}toast('匯入完成');}catch{toast('匯入失敗');}};r.readAsText(file);}
+async function clearAll(){if(!isAdmin())return toast('只有管理者可清除資料');if(!signupsRef)return toast('Firebase 尚未連線');if(!confirm('確定清除全部報名？'))return;const snap=await signupsRef.get();const batch=db.batch();snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();toast('已清除');}
 
 window.addEventListener('DOMContentLoaded',init);
 })();

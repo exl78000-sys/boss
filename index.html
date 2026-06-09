@@ -14,7 +14,14 @@
         <h1>打王報名</h1>
         <p id="currentCycleText">載入中</p>
       </div>
-      <button id="installBtn" class="ghost hidden" type="button">安裝</button>
+      <div class="top-actions">
+        <div id="authBox" class="auth-box">
+          <span id="authStatus">未登入</span>
+          <button id="googleLoginBtn" class="ghost small" type="button">Google 登入</button>
+          <button id="googleLogoutBtn" class="ghost small hidden" type="button">登出</button>
+        </div>
+        <button id="installBtn" class="ghost hidden" type="button">安裝</button>
+      </div>
     </header>
 
     <nav class="tabs">
@@ -34,7 +41,7 @@
         <div class="card">
           <label>玩家名稱</label>
           <input id="playerName" type="text" placeholder="例如：早餐 / 午餐 / 宵夜" autocomplete="nickname" />
-          <label class="check-row mt"><input id="hasAlt" type="checkbox" /> <span>有分身角色</span></label>
+          <label class="check-row mt"><input id="hasAlt" type="checkbox" /> <span>多角色</span></label>
           <input id="accountGroup" class="mt hidden" type="text" placeholder="分身群組名稱，例如：早餐" />
           <p class="hint">若同一位玩家有多個角色，請填寫相同的分身群組名稱。例如：角色名稱「早餐 / 午餐 / 宵夜」，分身群組名稱都填「早餐」。</p>
         </div>
@@ -112,6 +119,14 @@
 
       <section id="dataPage" class="page">
         <div class="card">
+          <h2>Google 帳號</h2>
+          <p id="authDetail" class="hint">未登入。登入後會在新報名與修改紀錄中記錄 Google 帳號，方便日後管理。</p>
+          <div class="row mt">
+            <button id="googleLoginBtn2" class="primary full" type="button">使用 Google 登入</button>
+            <button id="googleLogoutBtn2" class="ghost full hidden" type="button">登出</button>
+          </div>
+        </div>
+        <div class="card">
           <h2>資料管理</h2>
           <p id="syncStatus" class="hint">同步狀態：介面已載入，Firebase 連線中</p>
           <button id="exportData" class="primary full" type="button">匯出 JSON</button>
@@ -131,6 +146,7 @@
   </div>
 
   <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
   <script defer src="app.js"></script>
 </body>
