@@ -14,3 +14,5 @@
 .check-row{display:flex;align-items:center;gap:8px;color:var(--text);font-weight:800;margin-bottom:0}.check-row input{width:auto}.conflict-dot{color:#f59e0b;margin-right:4px}.slot.conflict{background:rgba(245,158,11,.12)}.conflict-summary{border:1px solid #f59e0b;background:rgba(245,158,11,.12);color:#fbbf24;border-radius:12px;padding:10px;margin:8px 0 12px;font-weight:800;line-height:1.5}.sync-ok{color:var(--ok)}.sync-warn{color:#fbbf24}.sync-bad{color:#ff9b9b}
 .mine-grid .availability{cursor:pointer;width:100%;font-family:inherit;font-size:inherit}
 .my-row{border-color:#2d4058}
+
+.boss-subtitle{margin:14px 0 8px;color:#334155;font-size:16px}
