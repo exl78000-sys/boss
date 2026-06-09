@@ -966,7 +966,7 @@ function renderTeams(data,target,mode){
   target.classList.remove('empty');
   if(!data||(!(data.formed||[]).length&&!(data.unformed||[]).length)){target.innerHTML='<div class="empty">目前沒有可編排的隊伍</div>';return;}
   const conflicts=conflictGroups(data);
-  const chtml=conflicts.length?`<div class="conflict-box"><b>橘燈提醒：分身同天多角色</b>${conflicts.map(([k,v])=>`<div>${html(v[0].accountGroup)}：${v.map(x=>html(x.player)+'('+x.boss+')').join('、')}</div>`).join('')}</div>`:'';
+  const chtml=conflicts.length?`<div class="conflict-box"><b>藍燈提醒：分身同天多角色</b>${conflicts.map(([k,v])=>`<div>${html(v[0].accountGroup)}：${v.map(x=>html(x.player)+'('+x.boss+')').join('、')}</div>`).join('')}</div>`:'';
   const formed=(data.formed||[]).map((f,i)=>teamHTML(f.team,i,f.date,f.boss,conflicts)).join('');
   const unformed=(data.unformed||[]).length?`<div class="unformed-block"><h2>未成團 / 即將成團隊伍</h2>${data.unformed.map((u,i)=>unformedHTML(u,i)).join('')}</div>`:'';
   target.innerHTML=chtml+formed+unformed;
@@ -981,7 +981,7 @@ function teamHTML(team,i,date,boss,conflicts){
   const req=reqStatus(team,boss), missing=req.filter(r=>r.missing>0&&!r.soft);
   return `<div class="team ${missing.length?'team-warning':''}"><h3>${boss} ${date} 第 ${i+1} 隊｜${team.length}人</h3><div class="req-line">${req.map(r=>`${r.label} ${r.have}/${r.count}${r.missing&&!r.soft?' 缺'+r.missing:''}`).join('｜')}</div>${missing.length?`<div class="missing-line">缺少：${missing.map(r=>`${r.label} ${r.missing}`).join('、')}</div>`:''}${team.map((m,idx)=>slotHTML(m,idx+1,isConflict(m,date,conflicts))).join('')}</div>`;
 }
-function slotHTML(m,idx,orange){return `<div class="slot"><b>${idx}</b><div>${orange?'<span class="orange">● </span>':''}${html(m.player)}<div class="job">${m.group}｜${m.job}${displayAccount(m)}｜報名 ${signupTime(m)}</div></div><span>${tag(m)}</span></div>`;}
+function slotHTML(m,idx,orange){return `<div class="slot"><b>${idx}</b><div>${orange?'<span class="blue-light">● </span>':''}${html(m.player)}<div class="job">${m.group}｜${m.job}${displayAccount(m)}｜報名 ${signupTime(m)}</div></div><span>${tag(m)}</span></div>`;}
 async function copyTeams(){
   if(!lastTeams)return toast('請先自動編排');
   const txt=(lastTeams.formed||[]).map((f,i)=>`${f.boss} ${f.date} 第${i+1}隊\n${f.team.map((m,n)=>`${n+1}. ${m.player}｜${m.job}`).join('\n')}`).join('\n\n');
