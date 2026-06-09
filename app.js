@@ -54,6 +54,7 @@ function initFirebase(){
 }
 async function addSignup(item){if(!signupsRef){toast('Firebase 尚未連線');return false;}await signupsRef.doc(docId(item)).set(item);return true;}
 async function deleteSignupObj(s){if(!signupsRef||!s)return;await signupsRef.doc(s.id||docId(s)).delete();}
+async function updateSignupObj(s,patch){if(!signupsRef||!s)return;await signupsRef.doc(s.id||docId(s)).update(patch);}
 
 function init(){
   selectedCycle=cycles()[0].id;
@@ -124,6 +125,27 @@ async function toggleMineDate(boss,date){
     }
   }
 }
+function settingSummaryFromForm(){return `${selectedGroup}｜${selectedJob}${E.hasAlt.checked?`｜分身群組 ${E.accountGroup.value.trim()||'未填'}`:'｜無分身群組'}`;}
+function settingSummaryFromSignup(s){return `${s?.group||'未填'}｜${s?.job||'未填'}${s?.hasAlt?`｜分身群組 ${html(s.accountGroup||'未填')}`:'｜無分身群組'}`;}
+async function applyCurrentSettingToMine(scopeBoss){
+  const name=E.playerName.value.trim(); if(!name)return toast('請輸入玩家名稱');
+  if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
+  const targets=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle&&(!scopeBoss||s.boss===scopeBoss));
+  if(!targets.length)return toast('沒有可更新的報名');
+  const label=scopeBoss?`${scopeBoss} ${targets.length} 筆`:`本週全部 ${targets.length} 筆`;
+  if(!confirm(`將目前上方選擇的職業/分身設定套用到 ${label}？
+
+目前設定：${settingSummaryFromForm()}`))return;
+  const patch={group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():''};
+  await Promise.all(targets.map(s=>updateSignupObj(s,patch)));
+  toast(`已更新 ${targets.length} 筆資料`);
+}
+function loadSettingFromSignupId(id){
+  const s=state.signups.find(x=>(x.id||docId(x))===id); if(!s)return;
+  selectedGroup=s.group||selectedGroup; selectedJob=s.job||jobs[selectedGroup]?.[0]||selectedJob;
+  E.hasAlt.checked=!!s.hasAlt; E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked); E.accountGroup.value=s.hasAlt?(s.accountGroup||''):'';
+  renderSignup(); toast('已載入職業/分身設定到上方表單');
+}
 function renderMine(){
   const name=E.playerName?.value.trim();
   if(!name){E.mySignupList.innerHTML='<div class="empty">輸入玩家名稱後可查看報名</div>';return;}
@@ -131,8 +153,12 @@ function renderMine(){
   const my=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle);
   const bossesWith=[...new Set(my.map(s=>s.boss))];
   if(!bossesWith.length){E.mySignupList.innerHTML='<div class="empty">這個週期目前沒有報名</div>';return;}
-  E.mySignupList.innerHTML=bossesWith.map(boss=>`<div class="item"><b>${html(name)}｜${boss}｜${selectedCycle}</b><div class="mine-days">${dates.map(d=>{const yes=!!findSignup(name,selectedCycle,boss,d);return `<button class="day-dot ${yes?'yes':'no'}" type="button" data-boss="${boss}" data-date="${d}"><span>${d.replace(' ','')}</span><b>${yes?'●':'×'}</b></button>`;}).join('')}</div></div>`).join('');
+  E.mySignupList.innerHTML=`<div class="mine-tools"><div class="hint">目前上方表單設定：${html(settingSummaryFromForm())}</div><button class="ghost small" type="button" data-apply-all="1">套用目前職業/分身到本週全部報名</button></div>`+
+    bossesWith.map(boss=>{const bossItems=my.filter(s=>s.boss===boss).sort(byTime);const first=bossItems[0];const firstId=first?(first.id||docId(first)):'';return `<div class="item"><div class="row between"><b>${html(name)}｜${boss}｜${selectedCycle}</b><button class="ghost small" type="button" data-load-setting="${html(firstId)}">載入設定</button></div><small>目前：${settingSummaryFromSignup(first)}</small><div class="mine-actions"><button class="ghost small" type="button" data-apply-boss="${boss}">套用目前職業/分身到${boss}</button></div><div class="mine-days">${dates.map(d=>{const yes=!!findSignup(name,selectedCycle,boss,d);return `<button class="day-dot ${yes?'yes':'no'}" type="button" data-boss="${boss}" data-date="${d}"><span>${d.replace(' ','')}</span><b>${yes?'●':'×'}</b></button>`;}).join('')}</div></div>`}).join('');
   E.mySignupList.querySelectorAll('.day-dot').forEach(b=>b.onclick=()=>toggleMineDate(b.dataset.boss,b.dataset.date));
+  E.mySignupList.querySelectorAll('[data-apply-boss]').forEach(b=>b.onclick=()=>applyCurrentSettingToMine(b.dataset.applyBoss));
+  E.mySignupList.querySelector('[data-apply-all]')?.addEventListener('click',()=>applyCurrentSettingToMine(''));
+  E.mySignupList.querySelectorAll('[data-load-setting]').forEach(b=>b.onclick=()=>loadSettingFromSignupId(b.dataset.loadSetting));
 }
 function renderRoster(){
   const cycle=E.rosterCycle.value||selectedCycle;
@@ -193,9 +219,22 @@ function outputPriority(boss,x){
   if(boss==='炎魔'){if(x.job==='弩手'||x.job==='槍手')return 0;if(x.group==='劍士'||x.job==='標賊'||x.job==='弓手')return 1;if(x.group==='法師')return 2;return 3;}
   if(boss==='普拉'){if(x.group==='法師')return 0;if(x.group==='弓箭手')return 1;return 2;}return 9;
 }
+function mageLimitBoss(boss){return ['困拉','炎魔','普拉'].includes(boss);}
+function mageCountIn(team){return team.filter(isMage).length;}
+function candidateAllowedByMageCap(team,m,boss){
+  // 困拉、炎魔、普拉：法師上限 2 位。
+  // 若已經有 2 位法師，只有在其他可選職業都篩完、剩下法師時，才允許第 3 位法師。
+  if(!mageLimitBoss(boss))return true;
+  if(!isMage(m))return true;
+  return mageCountIn(team)<2;
+}
 function fillTeam(team,pool,boss,limit){
   while(team.length<limit){
-    const candidates=pool.filter(x=>memberCanJoinTeam(team,x));
+    const base=pool.filter(x=>memberCanJoinTeam(team,x));
+    if(!base.length)break;
+    let candidates=base.filter(x=>candidateAllowedByMageCap(team,x,boss));
+    // 若剩餘可用角色全是法師，才放寬法師上限，讓隊伍可補滿或列出更接近成團的未成團隊伍。
+    if(!candidates.length && base.every(isMage))candidates=base;
     if(!candidates.length)break;
     candidates.sort((a,b)=>{
       const ac=jobCount(team,a.job),bc=jobCount(team,b.job);
