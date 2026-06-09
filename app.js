@@ -91,6 +91,18 @@ async function upsertCharacterMaster(player,{claim=false,unlink=false}={}){
   if(claim&&currentUser){data.ownerUid=currentUser.uid;data.ownerEmail=currentUser.email||'';data.claimedAt=new Date().toISOString();data.claimedBy=userMeta();data.unlinkedAt=firebase.firestore.FieldValue.delete();data.unlinkedBy=firebase.firestore.FieldValue.delete();}
   if(unlink){data.ownerUid='';data.ownerEmail='';data.unlinkedAt=new Date().toISOString();data.unlinkedBy=actorMeta();}
   await charactersRef.doc(characterDocId(player)).set(data,{merge:true});
+
+  // v50：立即更新本機角色主檔快取，避免 Firestore onSnapshot 尚未回來時，
+  // 再輸入同角色名稱仍自動帶入舊職業/舊分身群組。
+  const cleanData={...data};
+  ['unlinkedAt','unlinkedBy'].forEach(k=>{
+    if(cleanData[k]&&typeof cleanData[k].isEqual==='function')delete cleanData[k];
+  });
+  const id=characterDocId(player);
+  const idx=(state.characters||[]).findIndex(c=>c.id===id||norm(c.player)===norm(player));
+  const local={id,...((idx>=0?state.characters[idx]:{})||{}),...cleanData};
+  if(idx>=0)state.characters[idx]=local; else state.characters.push(local);
+  lastProfileLoadedFor='';
   return true;
 }
 function profileFromForm(player){return {player,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};}
@@ -99,6 +111,14 @@ async function saveMyCharacterProfile(player){
   try{
     const data=profileFromForm(player);
     await db.collection('users').doc(currentUser.uid).collection('characters').doc(profileDocId(player)).set(data,{merge:true});
+
+    // v50：同步更新 Google 個人角色紀錄快取，讓下拉與自動帶入立刻使用最新職業。
+    const id=profileDocId(player);
+    const idx=myProfiles.findIndex(p=>p.id===id||norm(p.player)===norm(player));
+    const local={id,...((idx>=0?myProfiles[idx]:{})||{}),...data};
+    if(idx>=0)myProfiles[idx]=local; else myProfiles.push(local);
+    lastProfileLoadedFor='';
+    renderMyCharacterSelect();
   }catch(err){console.warn('save profile failed',err);}
 }
 function subscribeProfiles(){
@@ -516,6 +536,9 @@ async function submitSignup(){
   if(added)parts.push(`新增 ${added} 筆`);
   if(changed||profileUpdated)parts.push(`已更改 ${Math.max(changed,profileUpdated)} 筆`);
   if(removed)parts.push(`已取消 ${removed} 筆`);
+  lastProfileLoadedFor='';
+  renderMyCharacterSelect();
+  renderClaimBox();
   toast(parts.length?parts.join('，'):'沒有變更');
 }
 function findSignup(player,cycle,boss,date){return state.signups.find(s=>norm(s.player)===norm(player)&&s.cycle===cycle&&s.boss===boss&&s.date===date);}
