@@ -16,3 +16,5 @@
 .my-row{border-color:#2d4058}
 
 .boss-subtitle{margin:14px 0 8px;color:#334155;font-size:16px}
+.unformed-block{border:1px solid #f59e0b;background:rgba(245,158,11,.08);border-radius:18px;padding:12px;margin:16px 0}
+.unformed-block h2{color:#fbbf24;margin-bottom:10px}.unformed-card{border:1px solid rgba(245,158,11,.4);border-radius:14px;padding:10px;margin:10px 0;background:rgba(15,17,21,.35)}.unformed-card h3{margin:0 0 8px}.unformed-members{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.unformed-members span{border:1px solid var(--line);background:#10141c;border-radius:999px;padding:6px 9px;font-size:13px}.boss-subtitle{color:var(--primary)}
