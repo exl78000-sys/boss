@@ -215,8 +215,11 @@ function teamReqCount(team,key){return team.filter(m=>reqKey(m)===key).length}
 function memberAllowedByUsage(m,date,boss,usage){
   if(!usage)return true;
   const player=norm(m.player);
+  // 週王模式：同一角色只要已成功入隊，本週期其他日期/其他王都不再出現。
+  if(usage.globalPlayers&&usage.globalPlayers.has(player))return false;
+  // 一般備援：同角色同一天也不可重複打不同王。
   const usedBosses=usage.players.get(date+'|'+player);
-  if(usedBosses&&usedBosses.size)return false; // 同角色同一天不可重複打不同王
+  if(usedBosses&&usedBosses.size)return false;
   const k=accountKey(m);
   if(!k)return true;
   const rec=usage.groups.get(date+'|'+k);
@@ -228,6 +231,7 @@ function memberAllowedByUsage(m,date,boss,usage){
 function markUsage(m,date,boss,usage){
   if(!usage)return;
   const player=norm(m.player);
+  if(usage.globalPlayers)usage.globalPlayers.add(player);
   const pkey=date+'|'+player;
   if(!usage.players.has(pkey))usage.players.set(pkey,new Set());
   usage.players.get(pkey).add(boss);
@@ -389,7 +393,7 @@ function buildWeekBossTeams(cycle=rosterCycle.value){
   const order=['龍王','困拉','炎魔','普拉'];
   const c=cycles().find(x=>x.id===cycle)||cycles()[0];
   const dateLabels=c.dates.map(d=>`${fmt(d)} ${dow(d)}`);
-  const usage={players:new Map(),groups:new Map()};
+  const usage={players:new Map(),groups:new Map(),globalPlayers:new Set()};
   const result=[];
   dateLabels.forEach(date=>{
     const day={date,teamsByBoss:[],total:0,arranged:0};
@@ -494,7 +498,7 @@ clearData.onclick=async()=>{if(confirm('確定清除 Firebase 全部報名？'))
 
 // ===== v17.1 override: 週王最大成團數優先 / 成團才消耗 / 未成團區 =====
 function cloneUsage(usage){
-  const u={players:new Map(),groups:new Map()};
+  const u={players:new Map(),groups:new Map(),globalPlayers:new Set([...(usage.globalPlayers||[])])};
   usage.players.forEach((set,k)=>u.players.set(k,new Set([...set])));
   usage.groups.forEach((rec,k)=>u.groups.set(k,{pap:rec.pap||0,locked:!!rec.locked,members:[...(rec.members||[])]}));
   return u;
@@ -529,7 +533,7 @@ function buildWeekBossTeams(cycle=rosterCycle.value){
   const order=['龍王','困拉','炎魔','普拉'];
   const c=cycles().find(x=>x.id===cycle)||cycles()[0];
   const dateLabels=c.dates.map(d=>`${fmt(d)} ${dow(d)}`);
-  const usage={players:new Map(),groups:new Map()};
+  const usage={players:new Map(),groups:new Map(),globalPlayers:new Set()};
   const result=[];
   const unformed=[];
 
