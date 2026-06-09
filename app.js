@@ -415,6 +415,173 @@ function renderAllData(){
   }).join('');
 }
 
+
+
+// ===== Queue algorithm helpers rebuilt in v33 =====
+function sameAltInTeam(team,cand){
+  const ak=accountKey(cand); if(!ak)return false;
+  return team.some(m=>accountKey(m)&&accountKey(m)===ak);
+}
+function canAddToTeam(team,cand,boss){
+  if(!cand||team.some(m=>identity(m)===identity(cand)))return false;
+  if(sameAltInTeam(team,cand))return false;
+  const limit=bossLimit(boss); if(team.length>=limit)return false;
+  const mageCount=team.filter(isMage).length;
+  if((boss==='困拉'||boss==='炎魔')&&isMage(cand)&&mageCount>=2)return false;
+  return true;
+}
+function usageCanUse(m,date,boss,usage){
+  if(!m)return false;
+  if(usage&&usage.players&&usage.players.has(identity(m)))return false;
+  const ak=accountKey(m);
+  if(!ak)return true;
+  const g=usage.groups.get(`${date}|${ak}`)||{lock:false,pap:0};
+  if(boss==='普拉')return !g.lock && g.pap<2;
+  return !g.lock && !g.pap;
+}
+function reqUnits(boss){
+  if(boss==='龍王')return [
+    {label:'黑騎',key:'dk1',fn:isDK,hard:true},
+    {label:'黑騎',key:'dk2',fn:isDK,hard:true},
+    {label:'弩手',key:'xbow',fn:m=>m.job==='弩手',fallback:isArcher,hard:true,groupLabel:'弓箭手'},
+    {label:'弓手',key:'bow',fn:m=>m.job==='弓手',fallback:isArcher,hard:true,groupLabel:'弓箭手'},
+    {label:'拳霸',key:'bucc',fn:isBucc,hard:true}
+  ];
+  if(boss==='困拉')return [
+    {label:'黑騎',key:'dk',fn:isDK,hard:true},
+    {label:'弓手',key:'bow',fn:m=>m.job==='弓手',fallback:m=>m.job==='弩手',hard:true,groupLabel:'弓箭手'},
+    {label:'主教',key:'bishop',fn:m=>m.job==='主教',fallback:isMage,hard:true,groupLabel:'法師'},
+    {label:'冰雷/火毒',key:'mage2',fn:m=>m.job==='冰雷'||m.job==='火毒',fallback:isMage,hard:true,groupLabel:'法師'}
+  ];
+  if(boss==='炎魔')return [
+    {label:'黑騎',key:'dk',fn:isDK,hard:true},
+    {label:'弩手',key:'xbow',fn:m=>m.job==='弩手',fallback:m=>m.job==='弓手',hard:true,groupLabel:'弓箭手'},
+    {label:'主教',key:'bishop',fn:m=>m.job==='主教',fallback:isMage,hard:true,groupLabel:'法師'}
+  ];
+  if(boss==='普拉')return [
+    {label:'法師',key:'mage',fn:isMage,hard:false,soft:true},
+    {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true}
+  ];
+  return [];
+}
+function reqStatus(team,boss){
+  if(boss==='龍王'){
+    const dk=team.filter(isDK).length, ar=team.filter(isArcher).length, bu=team.filter(isBucc).length;
+    return [
+      {label:'黑騎',count:2,have:Math.min(dk,2),missing:Math.max(0,2-dk)},
+      {label:'弓箭手',count:2,have:Math.min(ar,2),missing:Math.max(0,2-ar)},
+      {label:'拳霸',count:1,have:Math.min(bu,1),missing:Math.max(0,1-bu)}
+    ];
+  }
+  if(boss==='困拉'){
+    const dk=team.filter(isDK).length, ar=team.filter(isArcher).length, ma=team.filter(isMage).length;
+    return [
+      {label:'黑騎',count:1,have:Math.min(dk,1),missing:Math.max(0,1-dk)},
+      {label:'弓箭手',count:1,have:Math.min(ar,1),missing:Math.max(0,1-ar)},
+      {label:'法師',count:2,have:Math.min(ma,2),missing:Math.max(0,2-ma)}
+    ];
+  }
+  if(boss==='炎魔'){
+    const dk=team.filter(isDK).length, ar=team.filter(isArcher).length, ma=team.filter(isMage).length;
+    return [
+      {label:'黑騎',count:1,have:Math.min(dk,1),missing:Math.max(0,1-dk)},
+      {label:'弓箭手',count:1,have:Math.min(ar,1),missing:Math.max(0,1-ar)},
+      {label:'法師',count:1,have:Math.min(ma,1),missing:Math.max(0,1-ma)}
+    ];
+  }
+  if(boss==='普拉'){
+    const ma=team.filter(isMage).length, ar=team.filter(isArcher).length;
+    return [
+      {label:'法師',count:1,have:Math.min(ma,1),missing:Math.max(0,1-ma),soft:true},
+      {label:'弓箭手',count:1,have:Math.min(ar,1),missing:Math.max(0,1-ar),soft:true}
+    ];
+  }
+  return [];
+}
+function complete(team,boss){
+  if(team.length<bossLimit(boss))return false;
+  return reqStatus(team,boss).filter(r=>!r.soft).every(r=>r.missing===0);
+}
+function unformedReason(available,boss,team){
+  const reasons=[];
+  const limit=bossLimit(boss);
+  if(team.length<limit)reasons.push(`人數不足 ${team.length}/${limit}`);
+  reqStatus(team,boss).filter(r=>!r.soft&&r.missing>0).forEach(r=>reasons.push(`缺少${r.label} ${r.missing}`));
+  return reasons;
+}
+function pickCandidate(pool,team,boss,pred){
+  const candidates=pool.filter(x=>pred(x)&&canAddToTeam(team,x,boss)).sort(byTime);
+  if(!candidates.length)return null;
+  const chosen=candidates[0];
+  pool.splice(pool.indexOf(chosen),1);
+  team.push(chosen);
+  return chosen;
+}
+function outputPriority(boss,x){
+  if(boss==='龍王'){
+    if(x.group==='劍士'||x.job==='刀賊'||x.job==='拳霸')return 0;
+    if(x.group==='弓箭手')return 1;
+    if(x.group==='法師')return 2;
+    if(x.job==='槍手'||x.job==='標賊')return 3;
+    return 4;
+  }
+  if(boss==='困拉'){
+    if(x.job==='槍手'||x.job==='弓手')return 0;
+    if(x.group==='盜賊'||x.group==='劍士'||x.job==='拳霸')return 1;
+    if(x.group==='法師')return 2;
+    return 3;
+  }
+  if(boss==='炎魔'){
+    if(x.job==='弩手'||x.job==='槍手')return 0;
+    if(x.group==='劍士'||x.job==='標賊'||x.job==='弓手')return 1;
+    if(x.group==='法師')return 2;
+    return 3;
+  }
+  if(boss==='普拉'){
+    if(x.group==='法師')return 0;
+    if(x.group==='弓箭手')return 1;
+    return 2;
+  }
+  return 9;
+}
+function canUseMageForFill(pool,team,boss,cand){
+  if(!isMage(cand))return true;
+  const mageCount=team.filter(isMage).length;
+  if(boss==='困拉'||boss==='炎魔')return mageCount<2;
+  if(boss==='普拉'){
+    if(mageCount<2)return true;
+    // 普拉：只有其他條件都篩完，只剩法師可選時，才選第 3 位以上法師。
+    return !pool.some(x=>x!==cand&&!isMage(x)&&canAddToTeam(team,x,boss));
+  }
+  return true;
+}
+function fillTeam(pool,team,boss){
+  const limit=bossLimit(boss);
+  while(team.length<limit){
+    const candidates=pool.filter(x=>canAddToTeam(team,x,boss)&&canUseMageForFill(pool,team,boss,x));
+    if(!candidates.length)break;
+    const jobCounts={}; team.forEach(m=>{jobCounts[m.job]=(jobCounts[m.job]||0)+1;});
+    candidates.sort((a,b)=>{
+      const ca=jobCounts[a.job]||0, cb=jobCounts[b.job]||0;
+      return ca-cb || outputPriority(boss,a)-outputPriority(boss,b) || byTime(a,b);
+    });
+    const chosen=candidates[0];
+    pool.splice(pool.indexOf(chosen),1);
+    team.push(chosen);
+  }
+}
+function buildTeam(available,boss){
+  const pool=available.slice().sort(byTime);
+  const team=[];
+  // 先滿足必要/優先職業；同分身群組內如果有必要職業，會在這裡先被選入，而不是先選輸出角。
+  for(const unit of reqUnits(boss)){
+    let picked=pickCandidate(pool,team,boss,unit.fn);
+    if(!picked&&unit.fallback)picked=pickCandidate(pool,team,boss,unit.fallback);
+  }
+  fillTeam(pool,team,boss);
+  return team;
+}
+
 function markUse(m,date,boss,usage){
   usage.players.add(identity(m));
   const ak=accountKey(m); if(!ak)return;
