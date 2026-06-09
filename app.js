@@ -1,5 +1,6 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+// v17.3 fix: Firebase SDK 改為動態載入，避免 CDN/網路暫時失敗時整個畫面按鈕無法初始化。
+let initializeApp, getFirestore, collection, doc, setDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, enableIndexedDbPersistence;
+let firebaseApp=null, db=null, signupsCol=null;
 
 const firebaseConfig = {
   apiKey: "AIzaSyD5L4tp6vnjgHOIM7aEWx3fd8D2KdOb6WI",
@@ -10,10 +11,23 @@ const firebaseConfig = {
   appId: "1:728632211313:web:66f966b8b7ccf6cb3ee8d0",
   measurementId: "G-PN361HPV2J"
 };
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
-const signupsCol = collection(db, 'signups');
-try{ enableIndexedDbPersistence(db).catch(()=>{}); }catch{}
+
+async function initFirebase(){
+  const appMod = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
+  const fsMod = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js");
+  initializeApp = appMod.initializeApp;
+  ({ getFirestore, collection, doc, setDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, enableIndexedDbPersistence } = fsMod);
+  firebaseApp = initializeApp(firebaseConfig);
+  db = getFirestore(firebaseApp);
+  signupsCol = collection(db, 'signups');
+  try{ await enableIndexedDbPersistence(db).catch(()=>{}); }catch{}
+}
+const firebaseReady = initFirebase();
+async function ensureCloud(){
+  if(db && signupsCol) return true;
+  try{ await firebaseReady; return !!(db && signupsCol); }
+  catch(err){ console.error(err); setSyncStatus('Firebase 載入失敗，請重新整理或確認網路','sync-bad'); toast('Firebase 載入失敗'); return false; }
+}
 
 const $=id=>document.getElementById(id);
 const installBtn=$('installBtn'), currentCycleText=$('currentCycleText'), cycleBtns=$('cycleBtns'), classGroupBtns=$('classGroupBtns'), jobBtns=$('jobBtns'), bossBtns=$('bossBtns'), dateChecks=$('dateChecks'), selectAllDates=$('selectAllDates'), submitSignup=$('submitSignup'), playerName=$('playerName'), hasAlt=$('hasAlt'), accountGroup=$('accountGroup');
@@ -36,8 +50,9 @@ function setSyncStatus(msg,cls='sync-warn'){
 }
 function docIdForSignup(s){return encodeURIComponent(signupKey(s)).replace(/\//g,'_')}
 function signupFromDoc(d){const x=d.data();return {...x,id:d.id,createdAt:x.createdAtText||x.createdAt||''}}
-function startCloudSync(){
+async function startCloudSync(){
   setSyncStatus('連線中','sync-warn');
+  if(!(await ensureCloud())) return;
   onSnapshot(signupsCol,(snap)=>{
     state={signups:snap.docs.map(signupFromDoc)};
     setSyncStatus('已同步 '+state.signups.length+' 筆','sync-ok');
@@ -90,6 +105,7 @@ function renderClassButtons(){
 function renderDates(){const c=cycles().find(x=>x.id===selectedCycle);dateChecks.innerHTML=c.dates.map(d=>`<label class="choice dateChoice"><input type="checkbox" value="${fmt(d)} ${dow(d)}"><span>${fmt(d)} ${dow(d)}</span></label>`).join('')}
 selectAllDates.onclick=()=>{const checks=[...dateChecks.querySelectorAll('input')];const shouldCheck=checks.some(x=>!x.checked);checks.forEach(x=>x.checked=shouldCheck);selectAllDates.textContent=shouldCheck?'取消全選':'日期全選'};
 submitSignup.onclick=async()=>{
+  if(!(await ensureCloud())) return;
   const name=playerName.value.trim();
   const dates=[...dateChecks.querySelectorAll('input:checked')].map(x=>x.value);
   if(!name)return toast('請輸入玩家名稱');
@@ -165,6 +181,7 @@ function renderMine(){
   mySignupList.querySelectorAll('.mine-date').forEach(btn=>btn.onclick=()=>toggleMineDate(btn.dataset.boss,btn.dataset.date));
 }
 async function toggleMineDate(boss,date){
+  if(!(await ensureCloud())) return;
   const name=playerName.value.trim();
   if(!name)return toast('請輸入玩家名稱');
   if(hasAlt.checked&&!accountGroup.value.trim())return toast('請輸入分身群組名稱');
@@ -182,6 +199,7 @@ async function toggleMineDate(boss,date){
   toast('已加入報名');
 }
 async function deleteSignup(id){
+  if(!(await ensureCloud())) return;
   await deleteDoc(doc(db,'signups',id));
   toast('已取消報名');
 }
@@ -492,8 +510,8 @@ copyTeams.onclick=copyCurrentTeams;
 rosterCopyTeams.onclick=copyCurrentTeams;
 function renderAllData(){allData.innerHTML=state.signups.length?state.signups.slice().reverse().map(s=>`<div class="item"><b>${s.player}｜${s.job}${displayAccount(s)}</b><small>${s.cycle}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}</small></div>`).join(''):'<div class="empty">尚無資料</div>'}
 exportData.onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-signups-cloud.json';a.click();URL.revokeObjectURL(a.href)};
-importData.onchange=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=Array.isArray(data)?data:(data.signups||[]);const batch=writeBatch(db);arr.forEach(x=>{const item={...x,id:x.id||docIdForSignup(x),createdAt:x.createdAt||x.createdAtText||new Date().toISOString()};batch.set(doc(db,'signups',item.id),{...item,createdAtText:item.createdAt,createdAtServer:serverTimestamp()});});await batch.commit();toast('匯入成功')}catch(err){console.error(err);toast('匯入失敗')}};r.readAsText(file)};
-clearData.onclick=async()=>{if(confirm('確定清除 Firebase 全部報名？')){const snap=await getDocs(signupsCol);const batch=writeBatch(db);snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();toast('已清除')}};
+importData.onchange=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=Array.isArray(data)?data:(data.signups||[]);if(!db){toast('Firebase 尚未連線');return;}const batch=writeBatch(db);arr.forEach(x=>{const item={...x,id:x.id||docIdForSignup(x),createdAt:x.createdAt||x.createdAtText||new Date().toISOString()};batch.set(doc(db,'signups',item.id),{...item,createdAtText:item.createdAt,createdAtServer:serverTimestamp()});});await batch.commit();toast('匯入成功')}catch(err){console.error(err);toast('匯入失敗')}};r.readAsText(file)};
+clearData.onclick=async()=>{if(!(await ensureCloud())) return;if(confirm('確定清除 Firebase 全部報名？')){const snap=await getDocs(signupsCol);const batch=writeBatch(db);snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();toast('已清除')}};
 
 
 // ===== v17.1 override: 週王最大成團數優先 / 成團才消耗 / 未成團區 =====
