@@ -11,6 +11,7 @@ const E={};
 
 let db=null, signupsRef=null, state={signups:[]};
 let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
+let lastProfileLoadedFor='';
 let lastTeams=null, lastMode='';
 
 function norm(s){return String(s||'').trim().toLowerCase();}
@@ -65,7 +66,11 @@ function init(){
 function bindTabs(){document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.tab,.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.page).classList.add('active');renderAll();}));}
 function bindActions(){
   E.hasAlt.onchange=()=>{E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);if(!E.hasAlt.checked)E.accountGroup.value='';};
-  E.playerName.addEventListener('input',renderMine);
+  E.playerName.addEventListener('input',()=>{
+    const loaded=autoFillProfileByName();
+    if(loaded){renderSignup();toast('已自動帶入既有職業/分身資料');}
+    else renderMine();
+  });
   E.refreshMine.onclick=renderMine;
   E.selectAllDates.onclick=()=>{const checks=[...E.dateChecks.querySelectorAll('input')];const on=checks.some(x=>!x.checked);checks.forEach(x=>x.checked=on);E.selectAllDates.textContent=on?'取消全選':'日期全選';};
   E.submitSignup.onclick=submitSignup;
@@ -97,21 +102,52 @@ function renderAll(){
   E.adminDate.innerHTML=['週期全部日期',...cycleDates(E.adminCycle.value||selectedCycle)].map(v=>`<option>${v}</option>`).join('');
   renderRoster();renderAdminList();renderAllData();renderMine();
 }
+function currentProfilePatch(){
+  return {group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():''};
+}
+function autoFillProfileByName(){
+  const name=E.playerName.value.trim();
+  const key=norm(name);
+  if(!key||key===lastProfileLoadedFor)return false;
+  const matches=state.signups.filter(s=>norm(s.player)===key).sort((a,b)=>timeValue(b)-timeValue(a));
+  if(!matches.length)return false;
+  const s=matches[0];
+  selectedGroup=s.group||selectedGroup;
+  selectedJob=s.job||jobs[selectedGroup]?.[0]||selectedJob;
+  E.hasAlt.checked=!!s.hasAlt;
+  E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);
+  E.accountGroup.value=s.hasAlt?(s.accountGroup||''):'';
+  lastProfileLoadedFor=key;
+  return true;
+}
 async function submitSignup(){
   const name=E.playerName.value.trim();
   const dates=[...E.dateChecks.querySelectorAll('input:checked')].map(x=>x.value);
   if(!name)return toast('請輸入玩家名稱');
   if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
-  if(!dates.length)return toast('請至少選一個日期');
-  let added=0,dupes=[];
+  const patch=currentProfilePatch();
+
+  // 沒有勾日期時，若這個玩家本週已報名，按送出就更新既有報名資料。
+  if(!dates.length){
+    const targets=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle);
+    if(!targets.length)return toast('請至少選一個日期');
+    await Promise.all(targets.map(s=>updateSignupObj(s,patch)));
+    toast(`已更改 ${targets.length} 筆報名資料`);
+    return;
+  }
+
+  let added=0,changed=0;
   for(const date of dates){
     const item={cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString()};
-    const id=docId(item);item.id=id;
-    if(state.signups.some(s=>signupKey(s)===signupKey(item))){dupes.push(date);continue;}
+    const existing=state.signups.find(s=>signupKey(s)===signupKey(item));
+    if(existing){await updateSignupObj(existing,patch);changed++;continue;}
+    item.id=docId(item);
     await addSignup(item);added++;
   }
   E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);E.selectAllDates.textContent='日期全選';
-  toast(added?`報名成功：${added} 筆`:'沒有新增，已報名過');
+  if(added&&changed)toast(`報名成功 ${added} 筆，已更改 ${changed} 筆`);
+  else if(added)toast(`報名成功：${added} 筆`);
+  else toast(`已更改 ${changed} 筆報名資料`);
 }
 function findSignup(player,cycle,boss,date){return state.signups.find(s=>norm(s.player)===norm(player)&&s.cycle===cycle&&s.boss===boss&&s.date===date);}
 async function toggleMineDate(boss,date){
@@ -153,12 +189,9 @@ function renderMine(){
   const my=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle);
   const bossesWith=[...new Set(my.map(s=>s.boss))];
   if(!bossesWith.length){E.mySignupList.innerHTML='<div class="empty">這個週期目前沒有報名</div>';return;}
-  E.mySignupList.innerHTML=`<div class="mine-tools"><div class="hint">目前上方表單設定：${html(settingSummaryFromForm())}</div><button class="ghost small" type="button" data-apply-all="1">套用目前職業/分身到本週全部報名</button></div>`+
-    bossesWith.map(boss=>{const bossItems=my.filter(s=>s.boss===boss).sort(byTime);const first=bossItems[0];const firstId=first?(first.id||docId(first)):'';return `<div class="item"><div class="row between"><b>${html(name)}｜${boss}｜${selectedCycle}</b><button class="ghost small" type="button" data-load-setting="${html(firstId)}">載入設定</button></div><small>目前：${settingSummaryFromSignup(first)}</small><div class="mine-actions"><button class="ghost small" type="button" data-apply-boss="${boss}">套用目前職業/分身到${boss}</button></div><div class="mine-days">${dates.map(d=>{const yes=!!findSignup(name,selectedCycle,boss,d);return `<button class="day-dot ${yes?'yes':'no'}" type="button" data-boss="${boss}" data-date="${d}"><span>${d.replace(' ','')}</span><b>${yes?'●':'×'}</b></button>`;}).join('')}</div></div>`}).join('');
+  E.mySignupList.innerHTML=`<div class="mine-tools"><div class="hint">已帶入此玩家既有資料。若要修改職業或分身群組，直接調整上方表單後按「送出報名」；未勾日期時會更新本週全部既有報名。</div></div>`+
+    bossesWith.map(boss=>{const bossItems=my.filter(s=>s.boss===boss).sort(byTime);const first=bossItems[0];return `<div class="item"><div class="row between"><b>${html(name)}｜${boss}｜${selectedCycle}</b></div><small>目前：${settingSummaryFromSignup(first)}</small><div class="mine-days">${dates.map(d=>{const yes=!!findSignup(name,selectedCycle,boss,d);return `<button class="day-dot ${yes?'yes':'no'}" type="button" data-boss="${boss}" data-date="${d}"><span>${d.replace(' ','')}</span><b>${yes?'●':'×'}</b></button>`;}).join('')}</div></div>`}).join('');
   E.mySignupList.querySelectorAll('.day-dot').forEach(b=>b.onclick=()=>toggleMineDate(b.dataset.boss,b.dataset.date));
-  E.mySignupList.querySelectorAll('[data-apply-boss]').forEach(b=>b.onclick=()=>applyCurrentSettingToMine(b.dataset.applyBoss));
-  E.mySignupList.querySelector('[data-apply-all]')?.addEventListener('click',()=>applyCurrentSettingToMine(''));
-  E.mySignupList.querySelectorAll('[data-load-setting]').forEach(b=>b.onclick=()=>loadSettingFromSignupId(b.dataset.loadSetting));
 }
 function renderRoster(){
   const cycle=E.rosterCycle.value||selectedCycle;
