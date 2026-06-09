@@ -10,7 +10,7 @@ const $=id=>document.getElementById(id);
 const E={};
 ['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','myCharacterBox','myCharacterSelect','myCharacterHint','hasAlt','accountGroup','claimBox','claimStatus','claimCharacterBtn','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','adminEventLog','adminEventCount','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
 
-let db=null, auth=null, signupsRef=null, adminEventsRef=null, eventUnsub=null, state={signups:[],adminEvents:[]};
+let db=null, auth=null, signupsRef=null, charactersRef=null, charactersUnsub=null, adminEventsRef=null, eventUnsub=null, state={signups:[],characters:[],adminEvents:[]};
 let currentUser=null, myProfiles=[], profileUnsub=null;
 let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
 let lastProfileLoadedFor='';
@@ -78,6 +78,19 @@ function renderAdminEventLog(){
 }
 
 function profileDocId(player){return encodeURIComponent(norm(player)).replace(/[.#$[\]/]/g,'_');}
+function characterDocId(player){return profileDocId(player);}
+function characterRecord(player){const key=norm(player);return (state.characters||[]).find(c=>norm(c.player)===key)||null;}
+function characterOwnerUid(player){const c=characterRecord(player);return c&&c.ownerUid&&!c.unlinkedAt?c.ownerUid:'';}
+function characterOwnerEmail(player){const c=characterRecord(player);return c&&c.ownerEmail&&!c.unlinkedAt?c.ownerEmail:'';}
+function characterProfilePatch(player){return {player,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};}
+async function upsertCharacterMaster(player,{claim=false,unlink=false}={}){
+  if(!charactersRef||!player)return false;
+  const data=characterProfilePatch(player);
+  if(claim&&currentUser){data.ownerUid=currentUser.uid;data.ownerEmail=currentUser.email||'';data.claimedAt=new Date().toISOString();data.claimedBy=userMeta();data.unlinkedAt=firebase.firestore.FieldValue.delete();data.unlinkedBy=firebase.firestore.FieldValue.delete();}
+  if(unlink){data.ownerUid='';data.ownerEmail='';data.unlinkedAt=new Date().toISOString();data.unlinkedBy=actorMeta();}
+  await charactersRef.doc(characterDocId(player)).set(data,{merge:true});
+  return true;
+}
 function profileFromForm(player){return {player,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};}
 async function saveMyCharacterProfile(player){
   if(!currentUser||!db||!player)return;
@@ -171,6 +184,7 @@ function initFirebase(){
       renderAuth();
     }
     signupsRef=db.collection('signups');
+    charactersRef=db.collection('characters');
     adminEventsRef=db.collection('adminEvents');
     signupsRef.onSnapshot(snap=>{
       state.signups=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -178,6 +192,12 @@ function initFirebase(){
       tryAutoFillCurrentPlayer(true);
       renderAll();
     },err=>{console.error(err);setStatus('Firestore 連線失敗，請檢查規則','sync-bad');});
+    if(charactersUnsub)charactersUnsub();
+    charactersUnsub=charactersRef.onSnapshot(snap=>{
+      state.characters=snap.docs.map(d=>({id:d.id,...d.data()}));
+      tryAutoFillCurrentPlayer(true);
+      renderAll();
+    },err=>{console.warn('characters load failed',err);});
     if(eventUnsub)eventUnsub();
     eventUnsub=adminEventsRef.orderBy('createdAt','desc').limit(80).onSnapshot(snap=>{
       state.adminEvents=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -186,8 +206,11 @@ function initFirebase(){
   }catch(err){console.error(err);setStatus('Firebase 初始化失敗','sync-bad');}
 }
 function signupOwnerUid(s){
-  // v44：角色是否被 Google 帳號綁定，只看 ownerUid。
-  // createdBy 只當作紀錄來源，不再當成鎖定依據；避免舊資料因 createdBy 而無法被本人歸入或修改。
+  // v45：帳號綁定改為「角色主檔」層級，不再以單筆報名為主要權限來源。
+  // characters/{角色名稱} 有 ownerUid 時，該角色全部報名都視為同一個擁有者。
+  const masterOwner=characterOwnerUid(s?.player);
+  if(masterOwner)return masterOwner;
+  // 舊資料相容：若尚未建立角色主檔，暫時讀取舊報名 ownerUid。
   if(s?.unlinkedAt)return '';
   return s?.ownerUid||'';
 }
@@ -200,11 +223,17 @@ function canEditSignup(s){
 function playerLockedByOther(player){
   const key=norm(player);
   if(!key||isAdmin())return false;
+  const masterOwner=characterOwnerUid(player);
+  if(masterOwner){
+    if(!currentUser)return true;
+    return masterOwner!==currentUser.uid;
+  }
+  // 舊資料相容：尚未建立角色主檔時，才檢查舊報名 ownerUid。
   const records=state.signups.filter(s=>norm(s.player)===key);
-  const owners=[...new Set(records.map(signupOwnerUid).filter(Boolean))];
-  if(!owners.length)return false;              // 未綁定角色：輸入名稱即可修改/歸入
-  if(!currentUser)return true;                 // 未登入者不能修改已綁定角色
-  return owners.some(uid=>uid!==currentUser.uid); // 已被其他 Google 帳號綁定則鎖定
+  const owners=[...new Set(records.map(s=>s.ownerUid&&!s.unlinkedAt?s.ownerUid:'').filter(Boolean))];
+  if(!owners.length)return false;
+  if(!currentUser)return true;
+  return owners.some(uid=>uid!==currentUser.uid);
 }
 function requireLoginForWrite(){return true;}
 function deniedEditToast(){toast('此角色資料已由其他 Google 帳號建立，只有本人或管理者可以修改');}
@@ -223,6 +252,7 @@ async function addSignup(item){
   item.createdBy=item.createdBy||actorMeta();
   item.updatedBy=actorMeta();
   await signupsRef.doc(docId(item)).set(item);
+  await upsertCharacterMaster(item.player,{claim:!!currentUser});
   return true;
 }
 async function deleteSignupObj(s){
@@ -247,6 +277,7 @@ async function updateSignupObj(s,patch){
   }
   if(!s.ownerEmail&&s.createdBy?.email&&!next.ownerEmail)next.ownerEmail=s.createdBy.email;
   await signupsRef.doc(s.id||docId(s)).update(next);
+  await upsertCharacterMaster(s.player,{claim:!!currentUser});
   return true;
 }
 
@@ -256,7 +287,16 @@ async function claimUnboundPlayerRecords(player, showToast=false){
   if(!key)return 0;
 
   const records=state.signups.filter(s=>norm(s.player)===key);
-  if(!records.length)return 0;
+  const masterOwner=characterOwnerUid(player);
+  if(masterOwner && masterOwner!==currentUser.uid && !isAdmin()){
+    if(showToast)toast('此角色已被其他 Google 帳號綁定，不能歸入目前帳號');
+    return 0;
+  }
+  if(!records.length){
+    await upsertCharacterMaster(player,{claim:true});
+    if(showToast)toast(`已將「${player}」角色主檔綁定到目前 Google 帳號`);
+    return 1;
+  }
 
   // 若同角色已被其他 Google 帳號綁定，不允許目前帳號搶綁。
   // 管理者例外，但一般玩家只能綁定「未綁定」或「自己已綁定」的角色資料。
@@ -290,8 +330,9 @@ async function claimUnboundPlayerRecords(player, showToast=false){
       updatedBy: userMeta()
     });
   });
+  await upsertCharacterMaster(player,{claim:true});
   await batch.commit();
-  if(showToast)toast(`已將「${player}」${targets.length} 筆報名全部綁定到目前 Google 帳號`);
+  if(showToast)toast(`已將「${player}」角色綁定到目前 Google 帳號（同步 ${targets.length} 筆報名）`);
   return targets.length;
 }
 
@@ -369,11 +410,13 @@ function autoFillProfileByName(force=false){
   if(!force&&key===lastProfileLoadedFor)return false;
   const matches=state.signups.filter(s=>norm(s.player)===key).sort((a,b)=>timeValue(b)-timeValue(a));
   const savedProfile=myProfiles.find(p=>norm(p.player)===key);
-  if(!matches.length&&!savedProfile)return false;
+  const master=characterRecord(name);
+  if(!matches.length&&!savedProfile&&!master)return false;
 
-  // 優先帶入目前週期報名資料；若沒有報名資料，使用 Google 角色紀錄。
+  // v45：職業/分身資訊優先使用角色主檔；日期/王別再使用目前週期報名資料。
   const currentMatches=matches.filter(s=>s.cycle===selectedCycle);
-  const s=currentMatches[0]||matches[0]||savedProfile;
+  const signupSource=currentMatches[0]||matches[0]||{};
+  const s={...signupSource,...(savedProfile||{}),...(master||{})};
 
   // 若這筆資料屬於目前可選的兩週之一，也同步切到該週期。
   if(cycles().some(c=>c.id===s.cycle))selectedCycle=s.cycle;
@@ -417,10 +460,11 @@ function renderClaimBox(){
     E.claimCharacterBtn.disabled=true;
     return;
   }
-  const currentOwned=records.some(s=>signupOwnerUid(s)===currentUser.uid);
-  const otherOwned=records.some(s=>signupOwnerUid(s)&&signupOwnerUid(s)!==currentUser.uid&&!isAdmin());
-  const unbound=records.filter(s=>!signupOwnerUid(s));
-  const bindable=records.filter(s=>isAdmin()||!signupOwnerUid(s)||signupOwnerUid(s)===currentUser.uid);
+  const masterOwner=characterOwnerUid(name);
+  const currentOwned=masterOwner===currentUser.uid || (!masterOwner&&records.some(s=>signupOwnerUid(s)===currentUser.uid));
+  const otherOwned=!!(masterOwner&&masterOwner!==currentUser.uid&&!isAdmin()) || (!masterOwner&&records.some(s=>signupOwnerUid(s)&&signupOwnerUid(s)!==currentUser.uid&&!isAdmin()));
+  const unbound=masterOwner?[]:records.filter(s=>!signupOwnerUid(s));
+  const bindable=records.filter(s=>isAdmin()||!masterOwner||masterOwner===currentUser.uid);
   if(otherOwned){
     E.claimStatus.textContent='此角色已被其他 Google 帳號綁定，不能歸入目前帳號。';
     E.claimCharacterBtn.disabled=true;
@@ -428,7 +472,7 @@ function renderClaimBox(){
     E.claimStatus.textContent=`此角色共有 ${records.length} 筆報名，其中 ${unbound.length} 筆未綁定；可一鍵全部綁定到目前 Google 帳號。`;
     E.claimCharacterBtn.disabled=false;
   }else if(currentOwned){
-    E.claimStatus.textContent=`此角色 ${records.length} 筆報名已全部綁定到目前 Google 帳號。`;
+    E.claimStatus.textContent=`此角色主檔已綁定到目前 Google 帳號（共 ${records.length} 筆報名）。`;
     E.claimCharacterBtn.disabled=true;
   }else if(bindable.length){
     E.claimStatus.textContent=`可將此角色 ${bindable.length} 筆報名重新綁定到目前 Google 帳號。`;
@@ -472,6 +516,7 @@ async function updateWholePlayerProfile(player, patch){
     await signupsRef.doc(s.id||docId(s)).update(next);
     updated++;
   }
+  if(!denied)await upsertCharacterMaster(player,{claim:!!currentUser});
   return {updated,denied};
 }
 
@@ -619,10 +664,11 @@ function renderAllData(){
     const first=list[0]||{};
     const locked=!!signupOwnerUid(first);
     const playerId=html(player);
+    const masterEmail=characterOwnerEmail(player);
     const rows=list.map(s=>{
       return `<div class="item subitem"><b>${html(s.cycle)}｜${html(s.boss)}｜${html(s.date)}</b><small>${html(s.group||'')}｜${html(s.job||'')}${displayAccount(s)}｜報名 ${signupTime(s)}${s.createdBy&&s.createdBy.email?`｜Google ${html(s.createdBy.email)}`:''}</small></div>`;
     }).join('');
-    const ownerText = locked ? `｜綁定 ${html(first.ownerEmail||first.createdBy?.email||'Google 帳號')}` : '｜未綁定帳號';
+    const ownerText = locked ? `｜綁定 ${html(masterEmail||first.ownerEmail||first.createdBy?.email||'Google 帳號')}` : '｜未綁定帳號';
     return `<details class="data-player"><summary class="item data-summary"><div><b>${playerId}</b><small>${list.length} 筆｜${html(first.group||'')}｜${html(first.job||'')}${displayAccount(first)}${ownerText}</small></div><div class="summary-actions"><button class="danger small" type="button" onclick="event.preventDefault();event.stopPropagation();adminDeletePlayer('${playerId}')">刪除此角色</button></div></summary><div class="nested-list"><div class="item subitem"><button class="ghost small" type="button" onclick="adminUnlinkPlayer('${playerId}')" ${locked?'':'disabled'}>解除角色帳戶連結</button><small>${locked?'解除後此角色會變成未綁定，未登入者可用角色名稱修改。':'此角色目前未綁定 Google 帳號。'}</small></div>${rows}</div></details>`;
   }).join('');
 }
@@ -670,6 +716,7 @@ async function adminUnlinkPlayer(player){
       updatedBy:actorMeta()
     });
   });
+  await upsertCharacterMaster(player,{unlink:true});
   await batch.commit();
   await logAdminEvent('unlink-player',{player,count:list.length,bosses:[...new Set(list.map(s=>s.boss))].join('、'),previousOwner:list[0]?.ownerEmail||list[0]?.createdBy?.email||''});
   toast('已解除角色帳戶連結');

@@ -1,11 +1,13 @@
-Firebase Firestore 建議規則（v39）
+Firebase Firestore 建議規則（v45 角色主檔綁定）
 
 功能：
+- 角色綁定改用 characters/{角色名稱} 角色主檔。
+- 報名 signups 不再作為主要帳號綁定依據。
 - 管理者：exl78000@gmail.com 可修改、刪除、解除全部角色資料。
-- Google 登入建立/歸入帳號的角色：只有本人或管理者可以修改。
-- 管理者解除綁定後，資料會寫入 unlinkedAt；此後視為未綁定資料。
-- 未綁定資料：不設裝置權限，輸入角色名稱即可修改。
-- adminEvents：只有管理者可讀寫，用於記錄刪除角色/解除綁定事件。
+- Google 綁定角色：只有本人或管理者可以修改。
+- 未綁定角色：未登入者可用角色名稱修改。
+- users/{uid}/characters 為個人常用角色紀錄。
+- adminEvents 用於管理事件表。
 
 rules_version = '2';
 service cloud.firestore {
@@ -25,13 +27,23 @@ service cloud.firestore {
     function isOwner() {
       return signedIn() && !isUnlinked() && resource.data.ownerUid == request.auth.uid;
     }
-    function isCreatingGoogleOwned() {
-      return signedIn() && request.resource.data.ownerUid == request.auth.uid;
+    function newIsOwnerOrUnbound() {
+      return isAdmin()
+        || (signedIn() && request.resource.data.ownerUid == request.auth.uid)
+        || (!signedIn() && (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == ''));
+    }
+
+    match /characters/{characterId} {
+      allow read: if true;
+      allow create: if newIsOwnerOrUnbound();
+      allow update: if isAdmin() || isOwner() || !isGoogleOwned();
+      allow delete: if isAdmin();
     }
 
     match /signups/{signupId} {
       allow read: if true;
-      allow create: if isAdmin() || isCreatingGoogleOwned() || !signedIn();
+      // 前端會用 characters 主檔判斷權限；這裡保留相容邏輯。
+      allow create: if true;
       allow update, delete: if isAdmin() || isOwner() || !isGoogleOwned();
     }
 

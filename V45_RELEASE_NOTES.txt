@@ -1,0 +1,14 @@
+Boss App v45 - 角色主檔綁定
+
+核心修正：
+- 帳號綁定改成「綁定角色」，不是「綁定單筆報名」。
+- 新增 Firestore characters collection 作為角色主檔。
+- 角色主檔會保存：角色名稱、職業大類、職業、多角色、分身群組、ownerUid、ownerEmail。
+- 權限判斷優先讀取角色主檔 ownerUid。
+- 綁定後，該角色所有王、所有日期都歸同一個 Google 帳號。
+- 綁定後本人可正常修改職業、分身群組，也可報名其他王。
+- 管理者解除綁定會解除整個角色主檔，而不是只解除部分報名。
+
+注意：
+- 上傳後請同步更新 Firebase Firestore Rules，使用本 zip 內 FIRESTORE_RULES.txt。
+- 覆蓋 GitHub Pages 後請 Ctrl + F5 強制重新整理。
