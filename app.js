@@ -398,12 +398,82 @@ function fillSoftPreference(team,pool,boss){
   const soft=[{fn:isMage},{fn:isArcher}];
   soft.forEach(s=>{const m=pickOne(pool,team,s.fn);if(m)team.push(m);});
 }
+function requirementFulfillmentScore(team,boss){
+  // 分數只看硬性必要職業是否被滿足；用來避免分身群組內的輸出角色卡掉必要職業。
+  // 例如同分身群組有「刀賊」與「弓手」，隊伍缺弓箭手時會用弓手替換刀賊。
+  let score=0;
+  reqSlots(boss).filter(r=>!r.soft).forEach(r=>{
+    const have=team.filter(r.fn).length;
+    score += Math.min(have,r.count)*1000;
+    score -= Math.max(0,r.count-have)*10000;
+  });
+  score += new Set(team.map(x=>x.job)).size*5;
+  score += team.length;
+  return score;
+}
+function teamHasGroupConflict(team){
+  const ids=new Set(),groups=new Set();
+  for(const m of team){
+    const id=identity(m);
+    if(ids.has(id))return true;
+    ids.add(id);
+    const ak=accountKey(m);
+    if(ak){if(groups.has(ak))return true;groups.add(ak);}
+  }
+  return false;
+}
+function optimizeRequiredAlternates(team,available,boss){
+  // 修正分身優先權：同分身群組內如果有角色可補必要缺口，必須優先選必要職業，
+  // 而不是讓輸出職業先佔住該分身群組位置。
+  const limit=bossLimit(boss);
+  let guard=0;
+  while(guard++<20){
+    const missing=reqSlots(boss).filter(r=>!r.soft&&r.count>team.filter(r.fn).length);
+    if(!missing.length)break;
+    const currentScore=requirementFulfillmentScore(team,boss);
+    let best=null;
+    for(const slot of missing){
+      const candidates=available
+        .filter(c=>slot.fn(c)&&!team.some(t=>identity(t)===identity(c)))
+        .sort((a,b)=>{
+          const ai=(slot.prefer||[]).findIndex(p=>p.split('|').includes(a.job));
+          const bi=(slot.prefer||[]).findIndex(p=>p.split('|').includes(b.job));
+          const ap=ai<0?99:ai,bp=bi<0?99:bi;
+          return ap-bp||byTime(a,b);
+        });
+      for(const c of candidates){
+        if(memberCanJoinTeam(team,c)&&team.length<limit){
+          const nt=team.concat([c]);
+          const sc=requirementFulfillmentScore(nt,boss);
+          if(sc>currentScore&&(!best||sc>best.score)){best={type:'add',candidate:c,score:sc};}
+        }
+        for(let i=0;i<team.length;i++){
+          const nt=team.slice();
+          nt[i]=c;
+          if(teamHasGroupConflict(nt))continue;
+          const sc=requirementFulfillmentScore(nt,boss);
+          // 同分時，優先替換非必要職業、較晚報名或輸出順位較低者。
+          const replaced=team[i];
+          const tieBreak=(slot.fn(replaced)?0:100) + outputPriority(boss,replaced)*10 + timeValue(replaced)/1000000000000;
+          if(sc>currentScore&&(!best||sc>best.score||(sc===best.score&&tieBreak>(best.tieBreak||0)))){
+            best={type:'replace',index:i,candidate:c,score:sc,tieBreak};
+          }
+        }
+      }
+    }
+    if(!best)break;
+    if(best.type==='add')team.push(best.candidate);
+    else team[best.index]=best.candidate;
+  }
+  return team;
+}
 function buildTeam(available,boss){
   const pool=available.slice().sort(byTime); const team=[]; const limit=bossLimit(boss);
   const reqTeam=buildRequirementTeam(pool,boss);
   reqTeam.forEach(m=>{const i=pool.indexOf(m); if(i>=0){team.push(m); pool.splice(i,1);}});
   fillSoftPreference(team,pool,boss);
   fillTeam(team,pool,boss,limit);
+  optimizeRequiredAlternates(team,available,boss);
   return team;
 }
 function reqStatus(team,boss){return reqSlots(boss).map(r=>{const have=team.filter(r.fn).length;return {...r,have,missing:Math.max(0,r.count-have)};});}
