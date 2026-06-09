@@ -186,10 +186,10 @@ function initFirebase(){
   }catch(err){console.error(err);setStatus('Firebase 初始化失敗','sync-bad');}
 }
 function signupOwnerUid(s){
-  // 若管理者已解除綁定，unlinkedAt 會讓角色回到未綁定狀態；
-  // 舊資料若沒有 ownerUid 但有 createdBy.uid，仍視為 Google 擁有。
+  // v44：角色是否被 Google 帳號綁定，只看 ownerUid。
+  // createdBy 只當作紀錄來源，不再當成鎖定依據；避免舊資料因 createdBy 而無法被本人歸入或修改。
   if(s?.unlinkedAt)return '';
-  return s?.ownerUid||s?.createdBy?.uid||'';
+  return s?.ownerUid||'';
 }
 function canEditSignup(s){
   if(isAdmin())return true;
@@ -200,7 +200,11 @@ function canEditSignup(s){
 function playerLockedByOther(player){
   const key=norm(player);
   if(!key||isAdmin())return false;
-  return state.signups.some(s=>norm(s.player)===key&&!canEditSignup(s));
+  const records=state.signups.filter(s=>norm(s.player)===key);
+  const owners=[...new Set(records.map(signupOwnerUid).filter(Boolean))];
+  if(!owners.length)return false;              // 未綁定角色：輸入名稱即可修改/歸入
+  if(!currentUser)return true;                 // 未登入者不能修改已綁定角色
+  return owners.some(uid=>uid!==currentUser.uid); // 已被其他 Google 帳號綁定則鎖定
 }
 function requireLoginForWrite(){return true;}
 function deniedEditToast(){toast('此角色資料已由其他 Google 帳號建立，只有本人或管理者可以修改');}
@@ -240,10 +244,8 @@ async function updateSignupObj(s,patch){
     next.ownerEmail=currentUser.email||'';
     next.claimedAt=new Date().toISOString();
     next.claimedBy=userMeta();
-  }else if(!s.ownerUid&&existingOwner){
-    next.ownerUid=existingOwner;
   }
-  if(!s.ownerEmail&&s.createdBy?.email)next.ownerEmail=s.createdBy.email;
+  if(!s.ownerEmail&&s.createdBy?.email&&!next.ownerEmail)next.ownerEmail=s.createdBy.email;
   await signupsRef.doc(s.id||docId(s)).update(next);
   return true;
 }
