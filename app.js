@@ -8,9 +8,9 @@ const jobs={劍士:['黑騎','英雄','聖騎士'],弓箭手:['弩手','弓手']
 const ADMIN_EMAILS=['exl78000@gmail.com'];
 const $=id=>document.getElementById(id);
 const E={};
-['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','myCharacterBox','myCharacterSelect','myCharacterHint','hasAlt','accountGroup','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
+['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','myCharacterBox','myCharacterSelect','myCharacterHint','hasAlt','accountGroup','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','adminEventLog','adminEventCount','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
 
-let db=null, auth=null, signupsRef=null, state={signups:[]};
+let db=null, auth=null, signupsRef=null, adminEventsRef=null, eventUnsub=null, state={signups:[],adminEvents:[]};
 let currentUser=null, myProfiles=[], profileUnsub=null;
 let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
 let lastProfileLoadedFor='';
@@ -38,6 +38,43 @@ function userMeta(){
 }
 function actorMeta(){
   return currentUser?userMeta():{name:'訪客'};
+}
+function eventTime(v){
+  if(!v)return '';
+  let d=null;
+  if(typeof v.toDate==='function')d=v.toDate();
+  else d=new Date(v);
+  if(!d||Number.isNaN(d.getTime()))return '';
+  const pad=n=>String(n).padStart(2,'0');
+  return `${fmt(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+async function logAdminEvent(type,detail={}){
+  if(!adminEventsRef||!isAdmin())return;
+  try{
+    await adminEventsRef.add({
+      type,
+      ...detail,
+      createdAt:new Date().toISOString(),
+      actor:actorMeta()
+    });
+  }catch(err){console.warn('admin event log failed',err);}
+}
+function renderAdminEventLog(){
+  if(!E.adminEventLog)return;
+  if(!isAdmin()){
+    E.adminEventLog.innerHTML='<div class="empty">只有管理者可查看事件表</div>';
+    if(E.adminEventCount)E.adminEventCount.textContent='0筆';
+    return;
+  }
+  const events=state.adminEvents||[];
+  if(E.adminEventCount)E.adminEventCount.textContent=`${events.length}筆`;
+  E.adminEventLog.innerHTML=events.length?events.map(ev=>{
+    const action=ev.type==='delete-player'?'刪除角色':ev.type==='unlink-player'?'解除綁定':html(ev.type||'管理操作');
+    const actor=ev.actor?.email||ev.actor?.name||'管理者';
+    const count=ev.count!=null?`｜${ev.count} 筆`:'';
+    const extra=ev.bosses?`｜${html(ev.bosses)}`:'';
+    return `<div class="item"><b>${action}｜${html(ev.player||'')}</b><small>${eventTime(ev.createdAt)}｜${html(actor)}${count}${extra}</small></div>`;
+  }).join(''):'<div class="empty">尚無管理事件</div>';
 }
 
 function profileDocId(player){return encodeURIComponent(norm(player)).replace(/[.#$[\]/]/g,'_');}
@@ -132,11 +169,17 @@ function initFirebase(){
       renderAuth();
     }
     signupsRef=db.collection('signups');
+    adminEventsRef=db.collection('adminEvents');
     signupsRef.onSnapshot(snap=>{
       state.signups=snap.docs.map(d=>({id:d.id,...d.data()}));
       setStatus(`已同步 ${state.signups.length} 筆`,'sync-ok');
       renderAll();
     },err=>{console.error(err);setStatus('Firestore 連線失敗，請檢查規則','sync-bad');});
+    if(eventUnsub)eventUnsub();
+    eventUnsub=adminEventsRef.orderBy('createdAt','desc').limit(80).onSnapshot(snap=>{
+      state.adminEvents=snap.docs.map(d=>({id:d.id,...d.data()}));
+      renderAdminEventLog();
+    },err=>{console.warn('admin events load failed',err);});
   }catch(err){console.error(err);setStatus('Firebase 初始化失敗','sync-bad');}
 }
 function signupOwnerUid(s){
@@ -202,6 +245,32 @@ async function updateSignupObj(s,patch){
   return true;
 }
 
+async function claimUnboundPlayerRecords(player, showToast=false){
+  if(!currentUser||!signupsRef)return 0;
+  const key=norm(player);
+  if(!key)return 0;
+  // 若同角色已被其他 Google 帳號綁定，不允許目前帳號搶綁。
+  const lockedByOther=state.signups.some(s=>norm(s.player)===key&&signupOwnerUid(s)&&signupOwnerUid(s)!==currentUser.uid&&!isAdmin());
+  if(lockedByOther)return 0;
+  const targets=state.signups.filter(s=>norm(s.player)===key&&!signupOwnerUid(s));
+  if(!targets.length)return 0;
+  const batch=db.batch();
+  const now=new Date().toISOString();
+  targets.forEach(s=>{
+    batch.update(signupsRef.doc(s.id||docId(s)),{
+      ownerUid: currentUser.uid,
+      ownerEmail: currentUser.email||'',
+      claimedAt: now,
+      claimedBy: userMeta(),
+      updatedAt: now,
+      updatedBy: userMeta()
+    });
+  });
+  await batch.commit();
+  if(showToast)toast(`已將「${player}」歸入目前 Google 帳號`);
+  return targets.length;
+}
+
 function init(){
   selectedCycle=cycles()[0].id;
   bindTabs();bindActions();renderSignup();renderAuth();renderAll();initFirebase();
@@ -215,6 +284,11 @@ function bindActions(){
   E.hasAlt.onchange=()=>{E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);if(!E.hasAlt.checked)E.accountGroup.value='';};
   E.playerName.addEventListener('input',()=>{
     const loaded=autoFillProfileByName();
+    const typedName=E.playerName.value.trim();
+    if(currentUser&&typedName&&loaded&&!autoClaimedNames.has(norm(typedName))){
+      autoClaimedNames.add(norm(typedName));
+      claimUnboundPlayerRecords(typedName,true).catch(console.error);
+    }
     if(loaded){renderSignup();toast('已自動帶入既有職業/分身資料');}
     else {renderMine();renderMyCharacterSelect();}
   });
@@ -261,7 +335,7 @@ function renderAll(){
   fillCycleSelect(E.adminCycle);fillCycleSelect(E.rosterCycle);
   E.adminBoss.innerHTML=bosses.map(b=>`<option>${b.name}</option>`).join('');
   E.adminDate.innerHTML=['週期全部日期',...cycleDates(E.adminCycle.value||selectedCycle)].map(v=>`<option>${v}</option>`).join('');
-  renderRoster();renderAdminList();renderAllData();renderMine();renderMyCharacterSelect();
+  renderRoster();renderAdminList();renderAllData();renderAdminEventLog();renderMine();renderMyCharacterSelect();
 }
 function currentProfilePatch(){
   return {group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};
@@ -303,6 +377,7 @@ async function submitSignup(){
   if(!requireLoginForWrite())return;
   if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
   if(playerLockedByOther(name)){deniedEditToast();return;}
+  if(currentUser)await claimUnboundPlayerRecords(name,false);
   const patch=currentProfilePatch();
 
   // 沒有勾日期時，若這個玩家本週已報名，按送出就更新既有報名資料。
@@ -350,6 +425,7 @@ async function toggleMineDate(boss,date){
   const name=E.playerName.value.trim(); if(!name)return toast('請輸入玩家名稱');
   if(!requireLoginForWrite())return;
   if(playerLockedByOther(name)){deniedEditToast();return;}
+  if(currentUser)await claimUnboundPlayerRecords(name,false);
   const exists=findSignup(name,selectedCycle,boss,date);
   if(exists){if(confirm(`取消 ${boss} ${date} 報名？`)){if(await deleteSignupObj(exists))toast('已取消報名');}}
   else{
@@ -457,6 +533,7 @@ async function adminDeletePlayer(player){
   const batch=db.batch();
   list.forEach(s=>batch.delete(signupsRef.doc(s.id||docId(s))));
   await batch.commit();
+  await logAdminEvent('delete-player',{player,count:list.length,bosses:[...new Set(list.map(s=>s.boss))].join('、')});
   toast('已刪除此角色全部報名');
 }
 
@@ -480,6 +557,7 @@ async function adminUnlinkPlayer(player){
     });
   });
   await batch.commit();
+  await logAdminEvent('unlink-player',{player,count:list.length,bosses:[...new Set(list.map(s=>s.boss))].join('、'),previousOwner:list[0]?.ownerEmail||list[0]?.createdBy?.email||''});
   toast('已解除角色帳戶連結');
 }
 

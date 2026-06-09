@@ -1,10 +1,11 @@
-Firebase Firestore 建議規則（v37）
+Firebase Firestore 建議規則（v39）
 
 功能：
 - 管理者：exl78000@gmail.com 可修改、刪除、解除全部角色資料。
 - Google 登入建立/歸入帳號的角色：只有本人或管理者可以修改。
 - 管理者解除綁定後，資料會寫入 unlinkedAt；此後視為未綁定資料。
 - 未綁定資料：不設裝置權限，輸入角色名稱即可修改。
+- adminEvents：只有管理者可讀寫，用於記錄刪除角色/解除綁定事件。
 
 rules_version = '2';
 service cloud.firestore {
@@ -42,6 +43,10 @@ service cloud.firestore {
 
     match /users/{userId}/characters/{characterId} {
       allow read, write: if signedIn() && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /adminEvents/{eventId} {
+      allow read, write: if isAdmin();
     }
 
     match /{document=**} {
