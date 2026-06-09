@@ -253,7 +253,24 @@ function renderAdminList(){
   E.signupList.innerHTML=arr.length?arr.map(s=>`<div class="item"><b>${html(s.player)}</b><small>${s.job}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}${displayAccount(s)}</small></div>`).join(''):'<div class="empty">目前沒有人報名</div>';
 }
 function renderAllData(){
-  E.allData.innerHTML=state.signups.length?state.signups.slice().sort((a,b)=>timeValue(b)-timeValue(a)).map(s=>`<div class="item"><b>${html(s.player)}｜${s.job}</b><small>${s.cycle}｜${s.boss}｜${s.date}｜報名 ${signupTime(s)}${displayAccount(s)}</small></div>`).join(''):'<div class="empty">尚無資料</div>';
+  if(!state.signups.length){
+    E.allData.innerHTML='<div class="empty">尚無資料</div>';
+    return;
+  }
+  const byPlayer=new Map();
+  state.signups.forEach(s=>{
+    const key=norm(s.player);
+    if(!byPlayer.has(key))byPlayer.set(key,{player:s.player,latest:0,items:[]});
+    const group=byPlayer.get(key);
+    group.items.push(s);
+    group.latest=Math.max(group.latest,timeValue(s));
+  });
+  const players=[...byPlayer.values()].sort((a,b)=>a.player.localeCompare(b.player,'zh-Hant')||b.latest-a.latest);
+  E.allData.innerHTML=players.map(p=>{
+    const items=p.items.slice().sort((a,b)=>a.cycle.localeCompare(b.cycle)||a.boss.localeCompare(b.boss,'zh-Hant')||dateOrder(a.date,a.cycle)-dateOrder(b.date,b.cycle)||timeValue(a)-timeValue(b));
+    const latest=items.slice().sort((a,b)=>timeValue(b)-timeValue(a))[0]||{};
+    return `<details class="data-player"><summary class="item clickable"><b>${html(p.player)}</b><small>${items.length} 筆｜${latest.job?html(latest.group)+'｜'+html(latest.job):''}${displayAccount(latest)}</small></summary><div class="nested-list">${items.map(s=>`<div class="item subitem"><b>${html(s.boss)}｜${html(s.date)}</b><small>${html(s.cycle)}｜${html(s.group)}｜${html(s.job)}｜報名 ${signupTime(s)}${displayAccount(s)}</small></div>`).join('')}</div></details>`;
+  }).join('');
 }
 
 function reqSlots(boss){
