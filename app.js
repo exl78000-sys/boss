@@ -450,6 +450,29 @@ async function claimCurrentPlayerToGoogle(){
   }
   renderClaimBox();
 }
+
+async function updateWholePlayerProfile(player, patch){
+  if(!signupsRef||!player)return {updated:0,denied:0};
+  const records=state.signups.filter(s=>norm(s.player)===norm(player));
+  let updated=0,denied=0;
+  for(const s of records){
+    if(!canEditSignup(s)){denied++;continue;}
+    const next={...patch,updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
+    // 登入者若正在編輯未綁定角色，同步把整個角色歸入帳號。
+    if(currentUser&&!signupOwnerUid(s)){
+      next.ownerUid=currentUser.uid;
+      next.ownerEmail=currentUser.email||'';
+      next.claimedAt=new Date().toISOString();
+      next.claimedBy=userMeta();
+      next.unlinkedAt=firebase.firestore.FieldValue.delete();
+      next.unlinkedBy=firebase.firestore.FieldValue.delete();
+    }
+    await signupsRef.doc(s.id||docId(s)).update(next);
+    updated++;
+  }
+  return {updated,denied};
+}
+
 async function submitSignup(){
   const name=E.playerName.value.trim();
   const dates=[...E.dateChecks.querySelectorAll('input:checked')].map(x=>x.value);
@@ -457,20 +480,27 @@ async function submitSignup(){
   if(!requireLoginForWrite())return;
   if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
   if(playerLockedByOther(name)){deniedEditToast();return;}
+
+  // v43：登入者送出前先把「整個角色」未綁定資料歸入目前 Google 帳號，避免只綁到部分日期。
   if(currentUser)await claimUnboundPlayerRecords(name,false);
+
   const patch=currentProfilePatch();
 
-  // 沒有勾日期時，若這個玩家本週已報名，按送出就更新既有報名資料。
+  // v43：角色資訊是角色層級。只要本人/管理者送出，就同步更新此角色全部既有報名的職業與分身群組。
+  // 這樣綁定帳號後改職業，或改報不同王時，不會只改到部分日期/部分王。
+  const allPlayerRecords=state.signups.filter(s=>norm(s.player)===norm(name));
+  let profileUpdated=0;
+  if(allPlayerRecords.length){
+    const res=await updateWholePlayerProfile(name,patch);
+    profileUpdated=res.updated;
+    if(res.denied){deniedEditToast();return;}
+  }
+
+  // 沒有勾日期時：只更新角色既有報名與 Google 角色紀錄。
   if(!dates.length){
-    const targets=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle);
-    if(!targets.length){
-      await saveMyCharacterProfile(name);
-      return toast(currentUser?'已儲存角色資料；若要報名請選擇日期':'請至少選一個日期');
-    }
-    await Promise.all(targets.map(s=>updateSignupObj(s,patch)));
     await saveMyCharacterProfile(name);
-    toast(`已更改 ${targets.length} 筆報名資料`);
-    return;
+    if(profileUpdated)return toast(`已更改 ${profileUpdated} 筆角色資料`);
+    return toast(currentUser?'已儲存角色資料；若要報名請選擇日期':'請至少選一個日期');
   }
 
   const selectedSet=new Set(dates);
@@ -496,7 +526,7 @@ async function submitSignup(){
   E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);E.selectAllDates.textContent='日期全選';
   const parts=[];
   if(added)parts.push(`新增 ${added} 筆`);
-  if(changed)parts.push(`已更改 ${changed} 筆`);
+  if(changed||profileUpdated)parts.push(`已更改 ${Math.max(changed,profileUpdated)} 筆`);
   if(removed)parts.push(`已取消 ${removed} 筆`);
   toast(parts.length?parts.join('，'):'沒有變更');
 }
@@ -506,6 +536,8 @@ async function toggleMineDate(boss,date){
   if(!requireLoginForWrite())return;
   if(playerLockedByOther(name)){deniedEditToast();return;}
   if(currentUser)await claimUnboundPlayerRecords(name,false);
+  // v43：點綠/紅燈加入不同王/日期時，也先同步目前職業與分身設定到既有角色資料。
+  if(state.signups.some(s=>norm(s.player)===norm(name))){await updateWholePlayerProfile(name,currentProfilePatch());}
   const exists=findSignup(name,selectedCycle,boss,date);
   if(exists){if(confirm(`取消 ${boss} ${date} 報名？`)){if(await deleteSignupObj(exists))toast('已取消報名');}}
   else{
