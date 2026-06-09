@@ -1,7 +1,7 @@
-Firebase Firestore 建議規則（配合 v32 權限）
+Firebase Firestore 建議規則（配合 v34 歸入帳號）
 
 注意：未登入資料不做裝置權限控管；只要不是 Google 帳號擁有的角色，任何未登入使用者輸入角色名稱即可修改。
-Google 登入建立的資料仍只允許本人或管理者修改。
+Google 登入建立的資料仍只允許本人或管理者修改。已登入者可將未登入建立、尚未歸入帳號的角色資料更新並歸入自己的 Google 帳號。
 
 rules_version = '2';
 service cloud.firestore {
@@ -33,7 +33,7 @@ service cloud.firestore {
       // Google 登入者建立自己的資料；未登入者也可建立無 ownerUid 的資料。
       allow create: if isAdmin() || isCreatingGoogleOwned() || !signedIn();
       // Google 登入建立的資料：只有本人或管理者可改。
-      // 未登入建立的資料：不設裝置權限，任何人輸入角色名稱即可修改。
+      // 未登入建立的資料：不設裝置權限，任何人輸入角色名稱即可修改；已登入者更新時可歸入自己的 Google 帳號。
       allow update, delete: if isAdmin() || isOwner() || !isGoogleOwned();
     }
 

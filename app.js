@@ -91,7 +91,7 @@ function renderAuth(){
   const admin=isAdmin();
   const label=logged?`已登入：${currentUser.displayName||currentUser.email||'Google 使用者'}${admin?'（管理者）':''}`:'未登入';
   if(E.authStatus)E.authStatus.textContent=label;
-  if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。可新增/修改未登入建立的角色；Google 登入建立的角色只有本人或管理者可修改。';
+  if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。可新增/修改未登入建立的角色；登入後修改未歸入帳號的角色會自動歸入你的 Google 帳號。';
   [E.googleLoginBtn,E.googleLoginBtn2].forEach(b=>b&&b.classList.toggle('hidden',logged));
   [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&b.classList.toggle('hidden',!logged));
   renderMyCharacterSelect();
@@ -180,7 +180,18 @@ async function updateSignupObj(s,patch){
   if(!signupsRef||!s)return false;
   if(!canEditSignup(s)){deniedEditToast();return false;}
   const next={...patch,updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
-  if(!s.ownerUid&&signupOwnerUid(s))next.ownerUid=signupOwnerUid(s);
+
+  // v34：已登入者修改「未歸入 Google 帳號」的角色時，自動歸入目前 Google 帳號。
+  // 例：原本午餐是未登入建立；Google 登入後輸入午餐並送出，之後午餐就只允許本人/管理者修改。
+  const existingOwner=signupOwnerUid(s);
+  if(currentUser&&!existingOwner){
+    next.ownerUid=currentUser.uid;
+    next.ownerEmail=currentUser.email||'';
+    next.claimedAt=new Date().toISOString();
+    next.claimedBy=userMeta();
+  }else if(!s.ownerUid&&existingOwner){
+    next.ownerUid=existingOwner;
+  }
   if(!s.ownerEmail&&s.createdBy?.email)next.ownerEmail=s.createdBy.email;
   await signupsRef.doc(s.id||docId(s)).update(next);
   return true;
@@ -372,7 +383,7 @@ function renderMine(){
   const my=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle);
   const bossesWith=[...new Set(my.map(s=>s.boss))];
   if(!bossesWith.length){E.mySignupList.innerHTML='<div class="empty">這個週期目前沒有報名</div>';return;}
-  E.mySignupList.innerHTML=`<div class="mine-tools"><div class="hint">已帶入此玩家既有資料。若要修改職業或分身群組，直接調整上方表單後按「送出報名」；未勾日期時會更新本週全部既有報名。</div></div>`+
+  E.mySignupList.innerHTML=`<div class="mine-tools"><div class="hint">已帶入此玩家既有資料。若要修改職業或分身群組，直接調整上方表單後按「送出報名」；未勾日期時會更新本週全部既有報名。若已 Google 登入，未歸入帳號的角色會自動歸入你的帳號。</div></div>`+
     bossesWith.map(boss=>{const bossItems=my.filter(s=>s.boss===boss).sort(byTime);const first=bossItems[0];return `<div class="item"><div class="row between"><b>${html(name)}｜${boss}｜${selectedCycle}</b></div><small>目前：${settingSummaryFromSignup(first)}</small><div class="mine-days">${dates.map(d=>{const yes=!!findSignup(name,selectedCycle,boss,d);return `<button class="day-dot ${yes?'yes':'no'}" type="button" data-boss="${boss}" data-date="${d}"><span>${d.replace(' ','')}</span><b>${yes?'●':'×'}</b></button>`;}).join('')}</div></div>`}).join('');
   E.mySignupList.querySelectorAll('.day-dot').forEach(b=>b.onclick=()=>toggleMineDate(b.dataset.boss,b.dataset.date));
 }
