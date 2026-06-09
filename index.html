@@ -41,6 +41,13 @@
         <div class="card">
           <label>玩家名稱</label>
           <input id="playerName" type="text" placeholder="例如：早餐 / 午餐 / 宵夜" autocomplete="nickname" />
+          <div id="myCharacterBox" class="mt hidden">
+            <label>我的角色紀錄</label>
+            <select id="myCharacterSelect">
+              <option value="">選擇已記錄角色</option>
+            </select>
+            <p id="myCharacterHint" class="hint">Google 登入後，送出報名會自動記錄角色、職業與分身群組，之後可直接帶入。</p>
+          </div>
           <label class="check-row mt"><input id="hasAlt" type="checkbox" /> <span>多角色</span></label>
           <input id="accountGroup" class="mt hidden" type="text" placeholder="分身群組名稱，例如：早餐" />
           <p class="hint">若同一位玩家有多個角色，請填寫相同的分身群組名稱。例如：角色名稱「早餐 / 午餐 / 宵夜」，分身群組名稱都填「早餐」。</p>

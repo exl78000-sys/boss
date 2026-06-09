@@ -8,10 +8,10 @@ const jobs={劍士:['黑騎','英雄','聖騎士'],弓箭手:['弩手','弓手']
 const ADMIN_EMAILS=['exl78000@gmail.com'];
 const $=id=>document.getElementById(id);
 const E={};
-['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','hasAlt','accountGroup','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
+['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','myCharacterBox','myCharacterSelect','myCharacterHint','hasAlt','accountGroup','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
 
 let db=null, auth=null, signupsRef=null, state={signups:[]};
-let currentUser=null;
+let currentUser=null, myProfiles=[], profileUnsub=null;
 let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
 let lastProfileLoadedFor='';
 let autoFillDateSet=null;
@@ -35,6 +35,34 @@ function userMeta(){
     name:currentUser.displayName||'',
     photoURL:currentUser.photoURL||''
   }:null;
+}
+
+function profileDocId(player){return encodeURIComponent(norm(player)).replace(/[.#$[\]/]/g,'_');}
+function profileFromForm(player){return {player,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};}
+async function saveMyCharacterProfile(player){
+  if(!currentUser||!db||!player)return;
+  try{
+    const data=profileFromForm(player);
+    await db.collection('users').doc(currentUser.uid).collection('characters').doc(profileDocId(player)).set(data,{merge:true});
+  }catch(err){console.warn('save profile failed',err);}
+}
+function subscribeProfiles(){
+  if(profileUnsub){profileUnsub();profileUnsub=null;}
+  myProfiles=[];
+  if(!currentUser||!db){renderMyCharacterSelect();return;}
+  profileUnsub=db.collection('users').doc(currentUser.uid).collection('characters').onSnapshot(snap=>{
+    myProfiles=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.player||'').localeCompare(String(b.player||''),'zh-Hant'));
+    renderMyCharacterSelect();
+  },err=>console.warn('profiles load failed',err));
+}
+function renderMyCharacterSelect(){
+  if(!E.myCharacterBox||!E.myCharacterSelect)return;
+  const logged=!!currentUser;
+  E.myCharacterBox.classList.toggle('hidden',!logged);
+  if(!logged){E.myCharacterSelect.innerHTML='<option value="">Google 登入後可記錄角色</option>';return;}
+  E.myCharacterSelect.innerHTML='<option value="">選擇已記錄角色</option>'+myProfiles.map(p=>`<option value="${html(p.player||'')}">${html(p.player||'未命名')}｜${html(p.group||'')}｜${html(p.job||'')}${p.hasAlt?`｜${html(p.accountGroup||'')}`:''}</option>`).join('');
+  const now=E.playerName?.value?.trim();
+  if(now&&myProfiles.some(p=>norm(p.player)===norm(now)))E.myCharacterSelect.value=now;
 }
 
 function isAdmin(){return !!(currentUser&&ADMIN_EMAILS.includes(String(currentUser.email||'').toLowerCase()));}
@@ -63,6 +91,7 @@ function renderAuth(){
   if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。只有管理者 exl78000@gmail.com 可訪問後台與資料頁。';
   [E.googleLoginBtn,E.googleLoginBtn2].forEach(b=>b&&b.classList.toggle('hidden',logged));
   [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&b.classList.toggle('hidden',!logged));
+  renderMyCharacterSelect();
   applyAdminAccess();
 }
 
@@ -95,7 +124,7 @@ function initFirebase(){
     db=firebase.firestore();
     if(firebase.auth){
       auth=firebase.auth();
-      auth.onAuthStateChanged(user=>{currentUser=user;renderAuth();renderAll();});
+      auth.onAuthStateChanged(user=>{currentUser=user;subscribeProfiles();renderAuth();renderAll();});
     }else{
       renderAuth();
     }
@@ -125,8 +154,17 @@ function bindActions(){
   E.playerName.addEventListener('input',()=>{
     const loaded=autoFillProfileByName();
     if(loaded){renderSignup();toast('已自動帶入既有職業/分身資料');}
-    else renderMine();
+    else {renderMine();renderMyCharacterSelect();}
   });
+  if(E.myCharacterSelect)E.myCharacterSelect.onchange=()=>{
+    const name=E.myCharacterSelect.value;
+    if(!name)return;
+    E.playerName.value=name;
+    lastProfileLoadedFor='';
+    const loaded=autoFillProfileByName();
+    renderSignup();
+    toast(loaded?'已載入角色紀錄':'已選擇角色');
+  };
   E.refreshMine.onclick=renderMine;
   E.selectAllDates.onclick=()=>{const checks=[...E.dateChecks.querySelectorAll('input')];const on=checks.some(x=>!x.checked);checks.forEach(x=>x.checked=on);E.selectAllDates.textContent=on?'取消全選':'日期全選';};
   E.submitSignup.onclick=submitSignup;
@@ -161,7 +199,7 @@ function renderAll(){
   fillCycleSelect(E.adminCycle);fillCycleSelect(E.rosterCycle);
   E.adminBoss.innerHTML=bosses.map(b=>`<option>${b.name}</option>`).join('');
   E.adminDate.innerHTML=['週期全部日期',...cycleDates(E.adminCycle.value||selectedCycle)].map(v=>`<option>${v}</option>`).join('');
-  renderRoster();renderAdminList();renderAllData();renderMine();
+  renderRoster();renderAdminList();renderAllData();renderMine();renderMyCharacterSelect();
 }
 function currentProfilePatch(){
   return {group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};
@@ -171,11 +209,12 @@ function autoFillProfileByName(){
   const key=norm(name);
   if(!key||key===lastProfileLoadedFor)return false;
   const matches=state.signups.filter(s=>norm(s.player)===key).sort((a,b)=>timeValue(b)-timeValue(a));
-  if(!matches.length)return false;
+  const savedProfile=myProfiles.find(p=>norm(p.player)===key);
+  if(!matches.length&&!savedProfile)return false;
 
-  // 優先帶入目前週期資料；若目前週期沒有，才用最新一筆資料。
+  // 優先帶入目前週期報名資料；若沒有報名資料，使用 Google 角色紀錄。
   const currentMatches=matches.filter(s=>s.cycle===selectedCycle);
-  const s=currentMatches[0]||matches[0];
+  const s=currentMatches[0]||matches[0]||savedProfile;
 
   // 若這筆資料屬於目前可選的兩週之一，也同步切到該週期。
   if(cycles().some(c=>c.id===s.cycle))selectedCycle=s.cycle;
@@ -205,8 +244,12 @@ async function submitSignup(){
   // 沒有勾日期時，若這個玩家本週已報名，按送出就更新既有報名資料。
   if(!dates.length){
     const targets=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle);
-    if(!targets.length)return toast('請至少選一個日期');
+    if(!targets.length){
+      await saveMyCharacterProfile(name);
+      return toast(currentUser?'已儲存角色資料；若要報名請選擇日期':'請至少選一個日期');
+    }
     await Promise.all(targets.map(s=>updateSignupObj(s,patch)));
+    await saveMyCharacterProfile(name);
     toast(`已更改 ${targets.length} 筆報名資料`);
     return;
   }
@@ -230,6 +273,7 @@ async function submitSignup(){
     item.id=docId(item);
     await addSignup(item);added++;
   }
+  await saveMyCharacterProfile(name);
   E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);E.selectAllDates.textContent='日期全選';
   const parts=[];
   if(added)parts.push(`新增 ${added} 筆`);
@@ -245,7 +289,7 @@ async function toggleMineDate(boss,date){
   else{
     if(confirm(`加入 ${boss} ${date} 報名？`)){
       if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
-      const item={cycle:selectedCycle,boss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:userMeta(),updatedAt:new Date().toISOString(),updatedBy:userMeta()}; item.id=docId(item); await addSignup(item); toast('已加入報名');
+      const item={cycle:selectedCycle,boss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:userMeta(),updatedAt:new Date().toISOString(),updatedBy:userMeta()}; item.id=docId(item); await addSignup(item); await saveMyCharacterProfile(name); toast('已加入報名');
     }
   }
 }
