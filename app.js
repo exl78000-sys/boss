@@ -12,6 +12,7 @@ const E={};
 let db=null, signupsRef=null, state={signups:[]};
 let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
 let lastProfileLoadedFor='';
+let autoFillDateSet=null;
 let lastTeams=null, lastMode='';
 
 function norm(s){return String(s||'').trim().toLowerCase();}
@@ -93,6 +94,10 @@ function renderSignup(){
   E.bossBtns.innerHTML=bosses.map(b=>`<button class="choice ${b.name===selectedBoss?'active':''}" data-boss="${b.name}" type="button">${b.name}<br><small>${b.limit}人</small></button>`).join('');
   E.bossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedBoss=b.dataset.boss;renderSignup();});
   E.dateChecks.innerHTML=cycleDates(selectedCycle).map(d=>`<label class="choice dateChoice"><input type="checkbox" value="${d}"><span>${d}</span></label>`).join('');
+  if(autoFillDateSet&&autoFillDateSet.cycle===selectedCycle&&autoFillDateSet.boss===selectedBoss){
+    E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=autoFillDateSet.dates.has(x.value));
+    autoFillDateSet=null;
+  }
   renderMine();
 }
 function fillCycleSelect(el){el.innerHTML=cycles().map(c=>`<option value="${c.id}" ${c.id===selectedCycle?'selected':''}>${c.id}</option>`).join('');}
@@ -111,12 +116,26 @@ function autoFillProfileByName(){
   if(!key||key===lastProfileLoadedFor)return false;
   const matches=state.signups.filter(s=>norm(s.player)===key).sort((a,b)=>timeValue(b)-timeValue(a));
   if(!matches.length)return false;
-  const s=matches[0];
+
+  // 優先帶入目前週期資料；若目前週期沒有，才用最新一筆資料。
+  const currentMatches=matches.filter(s=>s.cycle===selectedCycle);
+  const s=currentMatches[0]||matches[0];
+
+  // 若這筆資料屬於目前可選的兩週之一，也同步切到該週期。
+  if(cycles().some(c=>c.id===s.cycle))selectedCycle=s.cycle;
+
+  selectedBoss=s.boss||selectedBoss;
   selectedGroup=s.group||selectedGroup;
   selectedJob=s.job||jobs[selectedGroup]?.[0]||selectedJob;
   E.hasAlt.checked=!!s.hasAlt;
   E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);
   E.accountGroup.value=s.hasAlt?(s.accountGroup||''):'';
+
+  const sameBossDates=state.signups
+    .filter(x=>norm(x.player)===key&&x.cycle===selectedCycle&&x.boss===selectedBoss)
+    .map(x=>x.date);
+  autoFillDateSet={cycle:selectedCycle,boss:selectedBoss,dates:new Set(sameBossDates)};
+
   lastProfileLoadedFor=key;
   return true;
 }
@@ -136,7 +155,18 @@ async function submitSignup(){
     return;
   }
 
-  let added=0,changed=0;
+  const selectedSet=new Set(dates);
+  const existingForBoss=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle&&s.boss===selectedBoss);
+  let added=0,changed=0,removed=0;
+
+  // 已報名過此王時，送出後以目前勾選日期為準：
+  // 綠燈保留/更新，取消勾選的日期會自動取消。
+  if(existingForBoss.length){
+    for(const s of existingForBoss){
+      if(!selectedSet.has(s.date)){await deleteSignupObj(s);removed++;}
+    }
+  }
+
   for(const date of dates){
     const item={cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString()};
     const existing=state.signups.find(s=>signupKey(s)===signupKey(item));
@@ -145,9 +175,11 @@ async function submitSignup(){
     await addSignup(item);added++;
   }
   E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);E.selectAllDates.textContent='日期全選';
-  if(added&&changed)toast(`報名成功 ${added} 筆，已更改 ${changed} 筆`);
-  else if(added)toast(`報名成功：${added} 筆`);
-  else toast(`已更改 ${changed} 筆報名資料`);
+  const parts=[];
+  if(added)parts.push(`新增 ${added} 筆`);
+  if(changed)parts.push(`已更改 ${changed} 筆`);
+  if(removed)parts.push(`已取消 ${removed} 筆`);
+  toast(parts.length?parts.join('，'):'沒有變更');
 }
 function findSignup(player,cycle,boss,date){return state.signups.find(s=>norm(s.player)===norm(player)&&s.cycle===cycle&&s.boss===boss&&s.date===date);}
 async function toggleMineDate(boss,date){
