@@ -8,7 +8,7 @@ const jobs={劍士:['黑騎','英雄','聖騎士'],弓箭手:['弩手','弓手']
 const ADMIN_EMAILS=['exl78000@gmail.com'];
 const $=id=>document.getElementById(id);
 const E={};
-['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','myCharacterBox','myCharacterSelect','myCharacterHint','hasAlt','accountGroup','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','adminEventLog','adminEventCount','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
+['installBtn','currentCycleText','cycleBtns','classGroupBtns','jobBtns','bossBtns','dateChecks','selectAllDates','submitSignup','playerName','myCharacterBox','myCharacterSelect','myCharacterHint','hasAlt','accountGroup','claimBox','claimStatus','claimCharacterBtn','adminCycle','adminBoss','adminDate','rosterCycle','rosterBossBtns','rosterTitle','rosterCount','rosterList','rosterGenerateTeams','rosterTeamResult','rosterCopyTeams','mySignupList','refreshMine','signupCount','signupList','allData','adminEventLog','adminEventCount','exportData','importData','clearData','syncStatus','toast','authStatus','authDetail','googleLoginBtn','googleLogoutBtn','googleLoginBtn2','googleLogoutBtn2'].forEach(id=>E[id]=$(id));
 
 let db=null, auth=null, signupsRef=null, adminEventsRef=null, eventUnsub=null, state={signups:[],adminEvents:[]};
 let currentUser=null, myProfiles=[], profileUnsub=null;
@@ -92,7 +92,9 @@ function subscribeProfiles(){
   if(!currentUser||!db){renderMyCharacterSelect();return;}
   profileUnsub=db.collection('users').doc(currentUser.uid).collection('characters').onSnapshot(snap=>{
     myProfiles=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.player||'').localeCompare(String(b.player||''),'zh-Hant'));
+    tryAutoFillCurrentPlayer(true);
     renderMyCharacterSelect();
+    renderClaimBox();
   },err=>console.warn('profiles load failed',err));
 }
 function renderMyCharacterSelect(){
@@ -128,7 +130,7 @@ function renderAuth(){
   const admin=isAdmin();
   const label=logged?`已登入：${currentUser.displayName||currentUser.email||'Google 使用者'}${admin?'（管理者）':''}`:'未登入';
   if(E.authStatus)E.authStatus.textContent=label;
-  if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。可新增/修改未登入建立的角色；登入後修改未歸入帳號的角色會自動歸入你的 Google 帳號。';
+  if(E.authDetail)E.authDetail.textContent=logged?(admin?`已登入管理者 ${currentUser.email||''}。可訪問後台與資料頁。`:`已登入 ${currentUser.email||''}。一般玩家只能使用報名與名單頁。`):'未登入。可新增/修改未登入建立的角色；登入後可用「綁定到我的 Google 帳號」將未綁定角色歸入帳號。';
   [E.googleLoginBtn,E.googleLoginBtn2].forEach(b=>b&&b.classList.toggle('hidden',logged));
   [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&b.classList.toggle('hidden',!logged));
   renderMyCharacterSelect();
@@ -164,7 +166,7 @@ function initFirebase(){
     db=firebase.firestore();
     if(firebase.auth){
       auth=firebase.auth();
-      auth.onAuthStateChanged(user=>{currentUser=user;subscribeProfiles();renderAuth();renderAll();});
+      auth.onAuthStateChanged(user=>{currentUser=user;subscribeProfiles();lastProfileLoadedFor='';tryAutoFillCurrentPlayer(true);renderAuth();renderAll();});
     }else{
       renderAuth();
     }
@@ -173,6 +175,7 @@ function initFirebase(){
     signupsRef.onSnapshot(snap=>{
       state.signups=snap.docs.map(d=>({id:d.id,...d.data()}));
       setStatus(`已同步 ${state.signups.length} 筆`,'sync-ok');
+      tryAutoFillCurrentPlayer(true);
       renderAll();
     },err=>{console.error(err);setStatus('Firestore 連線失敗，請檢查規則','sync-bad');});
     if(eventUnsub)eventUnsub();
@@ -283,15 +286,12 @@ function bindActions(){
   [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&(b.onclick=signOutGoogle));
   E.hasAlt.onchange=()=>{E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);if(!E.hasAlt.checked)E.accountGroup.value='';};
   E.playerName.addEventListener('input',()=>{
-    const loaded=autoFillProfileByName();
-    const typedName=E.playerName.value.trim();
-    if(currentUser&&typedName&&loaded&&!autoClaimedNames.has(norm(typedName))){
-      autoClaimedNames.add(norm(typedName));
-      claimUnboundPlayerRecords(typedName,true).catch(console.error);
-    }
+    const loaded=autoFillProfileByName(true);
+    renderClaimBox();
     if(loaded){renderSignup();toast('已自動帶入既有職業/分身資料');}
     else {renderMine();renderMyCharacterSelect();}
   });
+  if(E.claimCharacterBtn)E.claimCharacterBtn.onclick=claimCurrentPlayerToGoogle;
   if(E.myCharacterSelect)E.myCharacterSelect.onchange=()=>{
     const name=E.myCharacterSelect.value;
     if(!name)return;
@@ -327,6 +327,7 @@ function renderSignup(){
     E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=autoFillDateSet.dates.has(x.value));
     autoFillDateSet=null;
   }
+  renderClaimBox();
   renderMine();
 }
 function fillCycleSelect(el){el.innerHTML=cycles().map(c=>`<option value="${c.id}" ${c.id===selectedCycle?'selected':''}>${c.id}</option>`).join('');}
@@ -335,15 +336,16 @@ function renderAll(){
   fillCycleSelect(E.adminCycle);fillCycleSelect(E.rosterCycle);
   E.adminBoss.innerHTML=bosses.map(b=>`<option>${b.name}</option>`).join('');
   E.adminDate.innerHTML=['週期全部日期',...cycleDates(E.adminCycle.value||selectedCycle)].map(v=>`<option>${v}</option>`).join('');
-  renderRoster();renderAdminList();renderAllData();renderAdminEventLog();renderMine();renderMyCharacterSelect();
+  renderRoster();renderAdminList();renderAllData();renderAdminEventLog();renderMine();renderMyCharacterSelect();renderClaimBox();
 }
 function currentProfilePatch(){
   return {group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',updatedAt:new Date().toISOString(),updatedBy:userMeta()};
 }
-function autoFillProfileByName(){
+function autoFillProfileByName(force=false){
   const name=E.playerName.value.trim();
   const key=norm(name);
-  if(!key||key===lastProfileLoadedFor)return false;
+  if(!key)return false;
+  if(!force&&key===lastProfileLoadedFor)return false;
   const matches=state.signups.filter(s=>norm(s.player)===key).sort((a,b)=>timeValue(b)-timeValue(a));
   const savedProfile=myProfiles.find(p=>norm(p.player)===key);
   if(!matches.length&&!savedProfile)return false;
@@ -369,6 +371,61 @@ function autoFillProfileByName(){
 
   lastProfileLoadedFor=key;
   return true;
+}
+
+function tryAutoFillCurrentPlayer(force=false){
+  if(!E.playerName||!E.playerName.value.trim())return false;
+  const loaded=autoFillProfileByName(force);
+  if(loaded)renderSignup();
+  renderClaimBox();
+  return loaded;
+}
+function playerRecordsByName(player){
+  const key=norm(player);
+  return state.signups.filter(s=>norm(s.player)===key);
+}
+function renderClaimBox(){
+  if(!E.claimBox||!E.claimStatus||!E.claimCharacterBtn)return;
+  const name=E.playerName?.value?.trim()||'';
+  const logged=!!currentUser;
+  E.claimBox.classList.toggle('hidden',!logged||!name);
+  if(!logged||!name)return;
+  const records=playerRecordsByName(name);
+  if(!records.length){
+    E.claimStatus.textContent='此角色尚無報名資料。送出報名後會建立並綁定到目前 Google 帳號。';
+    E.claimCharacterBtn.disabled=true;
+    return;
+  }
+  const currentOwned=records.some(s=>signupOwnerUid(s)===currentUser.uid);
+  const otherOwned=records.some(s=>signupOwnerUid(s)&&signupOwnerUid(s)!==currentUser.uid&&!isAdmin());
+  const unbound=records.filter(s=>!signupOwnerUid(s));
+  if(otherOwned){
+    E.claimStatus.textContent='此角色已被其他 Google 帳號綁定，不能歸入目前帳號。';
+    E.claimCharacterBtn.disabled=true;
+  }else if(unbound.length){
+    E.claimStatus.textContent=`找到 ${unbound.length} 筆未綁定報名，可綁定到目前 Google 帳號。`;
+    E.claimCharacterBtn.disabled=false;
+  }else if(currentOwned){
+    E.claimStatus.textContent='此角色已綁定到目前 Google 帳號。';
+    E.claimCharacterBtn.disabled=true;
+  }else{
+    E.claimStatus.textContent='此角色目前無需綁定。';
+    E.claimCharacterBtn.disabled=true;
+  }
+}
+async function claimCurrentPlayerToGoogle(){
+  if(!currentUser)return toast('請先 Google 登入');
+  const name=E.playerName.value.trim();
+  if(!name)return toast('請輸入玩家名稱');
+  if(playerLockedByOther(name)){deniedEditToast();renderClaimBox();return;}
+  const count=await claimUnboundPlayerRecords(name,false);
+  if(count>0){
+    await saveMyCharacterProfile(name);
+    toast(`已將「${name}」${count} 筆資料綁定到目前 Google 帳號`);
+  }else{
+    toast('沒有可綁定的未綁定資料');
+  }
+  renderClaimBox();
 }
 async function submitSignup(){
   const name=E.playerName.value.trim();
