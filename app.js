@@ -139,7 +139,12 @@ function initFirebase(){
     },err=>{console.error(err);setStatus('Firestore 連線失敗，請檢查規則','sync-bad');});
   }catch(err){console.error(err);setStatus('Firebase 初始化失敗','sync-bad');}
 }
-function signupOwnerUid(s){return s?.ownerUid||s?.createdBy?.uid||'';}
+function signupOwnerUid(s){
+  // 若管理者已解除綁定，unlinkedAt 會讓角色回到未綁定狀態；
+  // 舊資料若沒有 ownerUid 但有 createdBy.uid，仍視為 Google 擁有。
+  if(s?.unlinkedAt)return '';
+  return s?.ownerUid||s?.createdBy?.uid||'';
+}
 function canEditSignup(s){
   if(isAdmin())return true;
   const owner=signupOwnerUid(s);
@@ -425,14 +430,15 @@ function renderAllData(){
     const locked=!!signupOwnerUid(first);
     const playerId=html(player);
     const rows=list.map(s=>{
-      const id=html(s.id||docId(s));
-      return `<div class="item subitem"><b>${html(s.cycle)}｜${html(s.boss)}｜${html(s.date)}</b><small>${html(s.group||'')}｜${html(s.job||'')}${displayAccount(s)}｜報名 ${signupTime(s)}${s.createdBy&&s.createdBy.email?`｜Google ${html(s.createdBy.email)}`:''}</small><button class="danger small mt" type="button" onclick="adminDeleteSignupById('${id}')">刪除此筆報名</button></div>`;
+      return `<div class="item subitem"><b>${html(s.cycle)}｜${html(s.boss)}｜${html(s.date)}</b><small>${html(s.group||'')}｜${html(s.job||'')}${displayAccount(s)}｜報名 ${signupTime(s)}${s.createdBy&&s.createdBy.email?`｜Google ${html(s.createdBy.email)}`:''}</small></div>`;
     }).join('');
-    return `<details class="data-player"><summary class="item"><b>${playerId}</b><small>${list.length} 筆｜${html(first.group||'')}｜${html(first.job||'')}${displayAccount(first)}${first.ownerEmail?`｜綁定 ${html(first.ownerEmail)}`:'｜未綁定帳號'}</small></summary><div class="nested-list"><div class="item subitem"><button class="ghost small" type="button" onclick="adminUnlinkPlayer('${playerId}')" ${locked?'':'disabled'}>解除角色帳戶連結</button><small>${locked?'解除後此角色會變成未綁定，未登入者可用角色名稱修改。':'此角色目前未綁定 Google 帳號。'}</small></div>${rows}</div></details>`;
+    const ownerText = locked ? `｜綁定 ${html(first.ownerEmail||first.createdBy?.email||'Google 帳號')}` : '｜未綁定帳號';
+    return `<details class="data-player"><summary class="item data-summary"><div><b>${playerId}</b><small>${list.length} 筆｜${html(first.group||'')}｜${html(first.job||'')}${displayAccount(first)}${ownerText}</small></div><div class="summary-actions"><button class="danger small" type="button" onclick="event.preventDefault();event.stopPropagation();adminDeletePlayer('${playerId}')">刪除此角色</button></div></summary><div class="nested-list"><div class="item subitem"><button class="ghost small" type="button" onclick="adminUnlinkPlayer('${playerId}')" ${locked?'':'disabled'}>解除角色帳戶連結</button><small>${locked?'解除後此角色會變成未綁定，未登入者可用角色名稱修改。':'此角色目前未綁定 Google 帳號。'}</small></div>${rows}</div></details>`;
   }).join('');
 }
 
 async function adminDeleteSignupById(id){
+  // v37 起資料頁不再提供單筆刪除，此函式保留給舊快取頁面避免錯誤。
   if(!isAdmin())return toast('只有管理者可刪除報名');
   if(!signupsRef)return toast('Firebase 尚未連線');
   const s=state.signups.find(x=>(x.id||docId(x))===id);
@@ -440,6 +446,18 @@ async function adminDeleteSignupById(id){
   if(!confirm(`確定刪除這筆報名？\n${label}`))return;
   await signupsRef.doc(id).delete();
   toast('已刪除單筆報名');
+}
+
+async function adminDeletePlayer(player){
+  if(!isAdmin())return toast('只有管理者可刪除角色');
+  if(!signupsRef)return toast('Firebase 尚未連線');
+  const list=state.signups.filter(s=>norm(s.player)===norm(player));
+  if(!list.length)return toast('找不到此角色報名資料');
+  if(!confirm(`確定刪除角色「${player}」？\n將刪除此角色全部 ${list.length} 筆報名資料，無法復原。`))return;
+  const batch=db.batch();
+  list.forEach(s=>batch.delete(signupsRef.doc(s.id||docId(s))));
+  await batch.commit();
+  toast('已刪除此角色全部報名');
 }
 
 async function adminUnlinkPlayer(player){
@@ -455,6 +473,8 @@ async function adminUnlinkPlayer(player){
       ownerEmail:'',
       claimedAt:'',
       claimedBy:null,
+      unlinkedAt:new Date().toISOString(),
+      unlinkedBy:actorMeta(),
       updatedAt:new Date().toISOString(),
       updatedBy:actorMeta()
     });

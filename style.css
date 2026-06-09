@@ -12,3 +12,9 @@
 .auth-box{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .auth-box span{color:var(--muted);font-size:12px;font-weight:800;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:520px){.topbar{align-items:flex-start}.top-actions{display:block;text-align:right}.auth-box{justify-content:flex-end;margin-bottom:6px}.auth-box span{display:block;max-width:170px;margin-left:auto;margin-bottom:4px}}
+
+/* v37 admin data page buttons */
+.data-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.data-summary>div:first-child{min-width:0;}
+.summary-actions{display:flex;gap:8px;flex-shrink:0;}
+.summary-actions button{white-space:nowrap;}

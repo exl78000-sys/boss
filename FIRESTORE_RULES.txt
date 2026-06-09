@@ -1,7 +1,10 @@
-Firebase Firestore 建議規則（配合 v34 歸入帳號）
+Firebase Firestore 建議規則（v37）
 
-注意：未登入資料不做裝置權限控管；只要不是 Google 帳號擁有的角色，任何未登入使用者輸入角色名稱即可修改。
-Google 登入建立的資料仍只允許本人或管理者修改。已登入者可將未登入建立、尚未歸入帳號的角色資料更新並歸入自己的 Google 帳號。
+功能：
+- 管理者：exl78000@gmail.com 可修改、刪除、解除全部角色資料。
+- Google 登入建立/歸入帳號的角色：只有本人或管理者可以修改。
+- 管理者解除綁定後，資料會寫入 unlinkedAt；此後視為未綁定資料。
+- 未綁定資料：不設裝置權限，輸入角色名稱即可修改。
 
 rules_version = '2';
 service cloud.firestore {
@@ -12,11 +15,14 @@ service cloud.firestore {
     function isAdmin() {
       return signedIn() && request.auth.token.email == 'exl78000@gmail.com';
     }
+    function isUnlinked() {
+      return resource.data.unlinkedAt != null && resource.data.unlinkedAt != '';
+    }
     function isGoogleOwned() {
-      return resource.data.ownerUid != null && resource.data.ownerUid != '';
+      return !isUnlinked() && resource.data.ownerUid != null && resource.data.ownerUid != '';
     }
     function isOwner() {
-      return signedIn() && (
+      return signedIn() && !isUnlinked() && (
         resource.data.ownerUid == request.auth.uid ||
         resource.data.createdBy.uid == request.auth.uid
       );
@@ -30,10 +36,7 @@ service cloud.firestore {
 
     match /signups/{signupId} {
       allow read: if true;
-      // Google 登入者建立自己的資料；未登入者也可建立無 ownerUid 的資料。
       allow create: if isAdmin() || isCreatingGoogleOwned() || !signedIn();
-      // Google 登入建立的資料：只有本人或管理者可改。
-      // 未登入建立的資料：不設裝置權限，任何人輸入角色名稱即可修改；已登入者更新時可歸入自己的 Google 帳號。
       allow update, delete: if isAdmin() || isOwner() || !isGoogleOwned();
     }
 
