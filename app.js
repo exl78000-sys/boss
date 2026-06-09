@@ -249,28 +249,47 @@ async function updateSignupObj(s,patch){
 }
 
 async function claimUnboundPlayerRecords(player, showToast=false){
-  if(!currentUser||!signupsRef)return 0;
+  if(!currentUser||!signupsRef||!db)return 0;
   const key=norm(player);
   if(!key)return 0;
+
+  const records=state.signups.filter(s=>norm(s.player)===key);
+  if(!records.length)return 0;
+
   // 若同角色已被其他 Google 帳號綁定，不允許目前帳號搶綁。
-  const lockedByOther=state.signups.some(s=>norm(s.player)===key&&signupOwnerUid(s)&&signupOwnerUid(s)!==currentUser.uid&&!isAdmin());
-  if(lockedByOther)return 0;
-  const targets=state.signups.filter(s=>norm(s.player)===key&&!signupOwnerUid(s));
+  // 管理者例外，但一般玩家只能綁定「未綁定」或「自己已綁定」的角色資料。
+  const lockedByOther=records.some(s=>{
+    const owner=signupOwnerUid(s);
+    return owner && owner!==currentUser.uid && !isAdmin();
+  });
+  if(lockedByOther){
+    if(showToast)toast('此角色已被其他 Google 帳號綁定，不能歸入目前帳號');
+    return 0;
+  }
+
+  // v42：綁定是「整個角色」層級，不是單筆報名層級。
+  // 只要角色名稱相同，所有未綁定/已解除綁定/自己已綁定的報名，都統一寫回目前 Google 帳號。
+  // 這可修正同一角色部分日期已綁定、部分日期仍顯示未綁定的問題。
+  const targets=records.filter(s=>isAdmin() || !signupOwnerUid(s) || signupOwnerUid(s)===currentUser.uid);
   if(!targets.length)return 0;
+
   const batch=db.batch();
   const now=new Date().toISOString();
   targets.forEach(s=>{
     batch.update(signupsRef.doc(s.id||docId(s)),{
       ownerUid: currentUser.uid,
       ownerEmail: currentUser.email||'',
+      createdBy: s.createdBy && s.createdBy.email ? s.createdBy : userMeta(),
       claimedAt: now,
       claimedBy: userMeta(),
+      unlinkedAt: firebase.firestore.FieldValue.delete(),
+      unlinkedBy: firebase.firestore.FieldValue.delete(),
       updatedAt: now,
       updatedBy: userMeta()
     });
   });
   await batch.commit();
-  if(showToast)toast(`已將「${player}」歸入目前 Google 帳號`);
+  if(showToast)toast(`已將「${player}」${targets.length} 筆報名全部綁定到目前 Google 帳號`);
   return targets.length;
 }
 
@@ -399,15 +418,19 @@ function renderClaimBox(){
   const currentOwned=records.some(s=>signupOwnerUid(s)===currentUser.uid);
   const otherOwned=records.some(s=>signupOwnerUid(s)&&signupOwnerUid(s)!==currentUser.uid&&!isAdmin());
   const unbound=records.filter(s=>!signupOwnerUid(s));
+  const bindable=records.filter(s=>isAdmin()||!signupOwnerUid(s)||signupOwnerUid(s)===currentUser.uid);
   if(otherOwned){
     E.claimStatus.textContent='此角色已被其他 Google 帳號綁定，不能歸入目前帳號。';
     E.claimCharacterBtn.disabled=true;
   }else if(unbound.length){
-    E.claimStatus.textContent=`找到 ${unbound.length} 筆未綁定報名，可綁定到目前 Google 帳號。`;
+    E.claimStatus.textContent=`此角色共有 ${records.length} 筆報名，其中 ${unbound.length} 筆未綁定；可一鍵全部綁定到目前 Google 帳號。`;
     E.claimCharacterBtn.disabled=false;
   }else if(currentOwned){
-    E.claimStatus.textContent='此角色已綁定到目前 Google 帳號。';
+    E.claimStatus.textContent=`此角色 ${records.length} 筆報名已全部綁定到目前 Google 帳號。`;
     E.claimCharacterBtn.disabled=true;
+  }else if(bindable.length){
+    E.claimStatus.textContent=`可將此角色 ${bindable.length} 筆報名重新綁定到目前 Google 帳號。`;
+    E.claimCharacterBtn.disabled=false;
   }else{
     E.claimStatus.textContent='此角色目前無需綁定。';
     E.claimCharacterBtn.disabled=true;
@@ -421,9 +444,9 @@ async function claimCurrentPlayerToGoogle(){
   const count=await claimUnboundPlayerRecords(name,false);
   if(count>0){
     await saveMyCharacterProfile(name);
-    toast(`已將「${name}」${count} 筆資料綁定到目前 Google 帳號`);
+    toast(`已將「${name}」${count} 筆報名全部綁定到目前 Google 帳號`);
   }else{
-    toast('沒有可綁定的未綁定資料');
+    toast('沒有可綁定的資料，或角色已被其他帳號綁定');
   }
   renderClaimBox();
 }
