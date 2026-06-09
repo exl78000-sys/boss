@@ -1,9 +1,0 @@
-Boss App v46 - 角色主檔綁定與新增報名修正
-
-修正：
-- 綁定帳號後仍可新增其他王報名。
-- 綁定帳號後仍可修改職業、分身群組。
-- 帳號只綁定在 characters 角色主檔，不再綁在每一筆 signups 報名。
-- 新增報名不再被舊報名 ownerUid 卡住。
-
-重要：請同步更新 Firebase Firestore Rules。
