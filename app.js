@@ -207,9 +207,81 @@ function fillTeam(team,pool,boss,limit){
     const m=candidates[0]; pool.splice(pool.indexOf(m),1); team.push(m);
   }
 }
+function reqUnits(boss){
+  // 需求以「單一位置」展開，避免同一分身群組的輸出角色先卡掉必要職業。
+  // 例如同群組有刀賊與弓手時，若隊伍缺弓箭手，會優先選弓手而不是刀賊。
+  if(boss==='龍王')return [
+    {label:'黑騎',fn:isDK,prefer:['黑騎']},
+    {label:'黑騎',fn:isDK,prefer:['黑騎']},
+    {label:'弓箭手',fn:isArcher,prefer:['弩手','弓手']},
+    {label:'弓箭手',fn:isArcher,prefer:['弓手','弩手']},
+    {label:'拳霸',fn:isBucc,prefer:['拳霸']}
+  ];
+  if(boss==='困拉')return [
+    {label:'黑騎',fn:isDK,prefer:['黑騎']},
+    {label:'弓箭手',fn:isArcher,prefer:['弓手','弩手']},
+    {label:'法師',fn:isMage,prefer:['主教','冰雷|火毒']},
+    {label:'法師',fn:isMage,prefer:['冰雷|火毒','主教']}
+  ];
+  if(boss==='炎魔')return [
+    {label:'黑騎',fn:isDK,prefer:['黑騎']},
+    {label:'弓箭手',fn:isArcher,prefer:['弩手','弓手']},
+    {label:'法師',fn:isMage,prefer:['主教','冰雷|火毒']}
+  ];
+  return [];
+}
+function prefIndex(unit,m){
+  if(!unit.fn(m))return 999;
+  for(let i=0;i<(unit.prefer||[]).length;i++){
+    const opts=unit.prefer[i].split('|');
+    if(opts.includes(m.job))return i;
+  }
+  return (unit.prefer||[]).length+1;
+}
+function assignmentScore(team,units){
+  // 分數越大越好：先比必要職業完成數，再比職業細部優先，再比職業多樣性，最後比報名時間。
+  let pref=0,time=0;
+  team.forEach((m,i)=>{pref+=100-prefIndex(units[i],m)*20; time-=timeValue(m)/1000000000000;});
+  const diversity=new Set(team.map(x=>x.job)).size;
+  return team.length*100000 + pref*100 + diversity*10 + time;
+}
+function buildRequirementTeam(pool,boss){
+  const units=reqUnits(boss);
+  if(!units.length)return [];
+  let best=[];
+  let bestScore=-Infinity;
+  const candidateLists=units.map(unit=>pool.filter(unit.fn).sort((a,b)=>prefIndex(unit,a)-prefIndex(unit,b)||byTime(a,b)).slice(0,18));
+  function dfs(idx,chosen){
+    if(idx>=units.length){
+      const sc=assignmentScore(chosen,units);
+      if(sc>bestScore){bestScore=sc;best=chosen.slice();}
+      return;
+    }
+    // 先嘗試能滿足此必要位置的角色。
+    for(const m of candidateLists[idx]){
+      if(chosen.includes(m))continue;
+      if(!memberCanJoinTeam(chosen,m))continue;
+      chosen.push(m);
+      dfs(idx+1,chosen);
+      chosen.pop();
+    }
+    // 允許不足，讓未成團區仍能顯示「接近成團」的隊伍與缺少項目。
+    dfs(idx+1,chosen);
+  }
+  dfs(0,[]);
+  return best;
+}
+function fillSoftPreference(team,pool,boss){
+  if(boss!=='普拉')return;
+  // 普拉法師、弓箭手平等，優先但非必需。
+  const soft=[{fn:isMage},{fn:isArcher}];
+  soft.forEach(s=>{const m=pickOne(pool,team,s.fn);if(m)team.push(m);});
+}
 function buildTeam(available,boss){
   const pool=available.slice().sort(byTime); const team=[]; const limit=bossLimit(boss);
-  reqSlots(boss).forEach(slot=>fillRequirement(team,pool,slot));
+  const reqTeam=buildRequirementTeam(pool,boss);
+  reqTeam.forEach(m=>{const i=pool.indexOf(m); if(i>=0){team.push(m); pool.splice(i,1);}});
+  fillSoftPreference(team,pool,boss);
   fillTeam(team,pool,boss,limit);
   return team;
 }
