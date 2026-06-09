@@ -234,45 +234,76 @@ function markUse(m,date,boss,usage){
   if(boss==='普拉')g.pap++; else g.lock=true;
   usage.groups.set(key,g);
 }
-function buildSingleBossTeams(cycle,boss){
-  const result=[];
+function useEligibleForDisplay(m,date,boss,usage,previewUsed){
+  if(previewUsed&&previewUsed.has(identity(m)))return false;
+  return usageCanUse(m,date,boss,usage);
+}
+function findBestCompleteTeam(cycle,boss,usage){
+  const candidates=[];
   for(const date of cycleDates(cycle)){
-    let pool=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date).sort(byTime);
-    const teams=[];
-    while(pool.length){const team=buildTeam(pool,boss); if(!team.length)break; team.forEach(m=>pool=pool.filter(x=>x!==m)); teams.push(team);}
-    if(teams.length)result.push({date,boss,teams,total:state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date).length});
+    const all=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
+    const available=all.filter(s=>usageCanUse(s,date,boss,usage));
+    if(!available.length)continue;
+    const team=buildTeam(available,boss);
+    if(complete(team,boss))candidates.push({date,boss,team,total:all.length,available:available.length});
   }
-  return {formed:result,unformed:[]};
+  if(!candidates.length)return null;
+  // 最大成團數優先：完整團通常等於上限；同分時取該日期可用人最多、原報名最多，再取較早日期。
+  candidates.sort((a,b)=>b.team.length-a.team.length||b.available-a.available||b.total-a.total||dateOrder(a.date,cycle)-dateOrder(b.date,cycle));
+  return candidates[0];
+}
+function buildSingleBossTeams(cycle,boss){
+  const usage={players:new Set(),groups:new Map()};
+  const formed=[];
+  while(true){
+    const best=findBestCompleteTeam(cycle,boss,usage);
+    if(!best)break;
+    best.team.forEach(m=>markUse(m,best.date,boss,usage));
+    formed.push({date:best.date,boss,team:best.team,total:best.total});
+  }
+  const unformed=buildUpcomingUnformed(cycle,[boss],usage);
+  return {formed,unformed};
 }
 function buildWeekBossTeams(cycle){
   const usage={players:new Set(),groups:new Map()};
-  const formed=[], unformed=[];
+  const formed=[];
   for(const boss of bossOrder){
     while(true){
-      const cand=[];
+      const best=findBestCompleteTeam(cycle,boss,usage);
+      if(!best)break;
+      best.team.forEach(m=>markUse(m,best.date,boss,usage));
+      formed.push({date:best.date,boss,team:best.team,total:best.total});
+    }
+  }
+  const unformed=buildUpcomingUnformed(cycle,bossOrder,usage);
+  return {formed,unformed};
+}
+function buildUpcomingUnformed(cycle,bossList,usage){
+  // 只列出「即將成團」的候補隊伍，不再把每個日期的重複候選全部列出。
+  // 顯示用的 previewUsed 會避免同一角色在未成團區重複出現。
+  const previewUsed=new Set();
+  const result=[];
+  for(const boss of bossList){
+    let safety=0;
+    while(safety++<30){
+      const partials=[];
       for(const date of cycleDates(cycle)){
         const all=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
-        const available=all.filter(s=>usageCanUse(s,date,boss,usage));
+        const available=all.filter(s=>useEligibleForDisplay(s,date,boss,usage,previewUsed));
         if(!available.length)continue;
         const team=buildTeam(available,boss);
-        if(complete(team,boss))cand.push({date,boss,team,total:all.length,available:available.length});
+        if(!team.length)continue;
+        if(complete(team,boss))continue;
+        partials.push({date,boss,members:team,total:all.length,available:available.length,reasons:unformedReason(available,boss,team)});
       }
-      if(!cand.length)break;
-      cand.sort((a,b)=>b.team.length-a.team.length||b.available-a.available||b.total-a.total||dateOrder(a.date,cycle)-dateOrder(b.date,cycle));
-      const c=cand[0]; c.team.forEach(m=>markUse(m,c.date,boss,usage));
-      formed.push({date:c.date,boss,team:c.team,total:c.total});
+      if(!partials.length)break;
+      partials.sort((a,b)=>b.members.length-a.members.length||b.available-a.available||b.total-a.total||dateOrder(a.date,cycle)-dateOrder(b.date,cycle));
+      const best=partials[0];
+      best.members.forEach(m=>previewUsed.add(identity(m)));
+      result.push(best);
     }
   }
-  for(const boss of bossOrder){
-    for(const date of cycleDates(cycle)){
-      const all=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
-      const available=all.filter(s=>usageCanUse(s,date,boss,usage));
-      if(!available.length)continue;
-      const team=buildTeam(available,boss);
-      if(!complete(team,boss))unformed.push({date,boss,members:available.sort(byTime),reasons:unformedReason(available,boss,team)});
-    }
-  }
-  return {formed,unformed};
+  return result;
 }
 function generateRosterTeams(){
   const cycle=E.rosterCycle.value||selectedCycle;
@@ -291,8 +322,13 @@ function renderTeams(data,target,mode){
   const conflicts=conflictGroups(data);
   const chtml=conflicts.length?`<div class="conflict-box"><b>橘燈提醒：分身同天多角色</b>${conflicts.map(([k,v])=>`<div>${html(v[0].accountGroup)}：${v.map(x=>html(x.player)+'('+x.boss+')').join('、')}</div>`).join('')}</div>`:'';
   const formed=(data.formed||[]).map((f,i)=>teamHTML(f.team,i,f.date,f.boss,conflicts)).join('');
-  const unformed=(data.unformed||[]).length?`<div class="unformed-block"><h2>未成團</h2>${data.unformed.map(u=>`<div class="unformed-card"><h3>${u.boss}｜${u.date}</h3><div class="missing-line">原因：${u.reasons.map(html).join('、')}</div>${u.members.map(m=>slotHTML(m,'候補',false)).join('')}</div>`).join('')}</div>`:'';
+  const unformed=(data.unformed||[]).length?`<div class="unformed-block"><h2>未成團 / 即將成團隊伍</h2>${data.unformed.map((u,i)=>unformedHTML(u,i)).join('')}</div>`:'';
   target.innerHTML=chtml+formed+unformed;
+}
+function teamLetter(i){return String.fromCharCode(65+(i%26));}
+function missingPeopleText(u){const limit=bossLimit(u.boss);return `缺少 ${Math.max(0,limit-u.members.length)} 位` + (u.members.length?`（${u.members.length}/${limit}）`:`（0/${limit}）`);}
+function unformedHTML(u,i){
+  return `<div class="unformed-card"><h3>${teamLetter(i)}團 未成團｜${u.boss}｜${u.date}</h3><div class="missing-line">${missingPeopleText(u)}${u.reasons&&u.reasons.length?'｜'+u.reasons.map(html).join('、'):''}</div>${u.members.map((m,idx)=>slotHTML(m,idx+1,false)).join('')}</div>`;
 }
 function isConflict(m,date,conflicts){const ak=accountKey(m);if(!ak)return false;return conflicts.some(([k,v])=>k===`${date}|${ak}`&&v.length>1);}
 function teamHTML(team,i,date,boss,conflicts){
