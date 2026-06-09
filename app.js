@@ -13,6 +13,8 @@ const E={};
 let db=null, auth=null, signupsRef=null, charactersRef=null, charactersUnsub=null, adminEventsRef=null, eventUnsub=null, state={signups:[],characters:[],adminEvents:[]};
 let currentUser=null, myProfiles=[], profileUnsub=null;
 let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
+// v49：使用者手動切換王別後，不讓角色自動帶入/Google profile 同步把王別切回舊王，避免新增其他王報名看起來沒生效。
+let manualBossTouched=false;
 let lastProfileLoadedFor='';
 let autoFillDateSet=null;
 let lastTeams=null, lastMode='';
@@ -299,6 +301,7 @@ function bindActions(){
   [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&(b.onclick=signOutGoogle));
   E.hasAlt.onchange=()=>{E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);if(!E.hasAlt.checked)E.accountGroup.value='';};
   E.playerName.addEventListener('input',()=>{
+    manualBossTouched=false;
     const loaded=autoFillProfileByName(true);
     renderClaimBox();
     if(loaded){renderSignup();toast('已自動帶入既有職業/分身資料');}
@@ -309,6 +312,7 @@ function bindActions(){
     const name=E.myCharacterSelect.value;
     if(!name)return;
     E.playerName.value=name;
+    manualBossTouched=false;
     lastProfileLoadedFor='';
     const loaded=autoFillProfileByName();
     renderSignup();
@@ -334,7 +338,7 @@ function renderSignup(){
   E.jobBtns.innerHTML=jobs[selectedGroup].map(j=>`<button class="choice ${j===selectedJob?'active':''}" data-job="${j}" type="button">${j}</button>`).join('');
   E.jobBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedJob=b.dataset.job;renderSignup();});
   E.bossBtns.innerHTML=bosses.map(b=>`<button class="choice ${b.name===selectedBoss?'active':''}" data-boss="${b.name}" type="button">${b.name}<br><small>${b.limit}人</small></button>`).join('');
-  E.bossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedBoss=b.dataset.boss;renderSignup();});
+  E.bossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{manualBossTouched=true;selectedBoss=b.dataset.boss;autoFillDateSet=null;renderSignup();});
   E.dateChecks.innerHTML=cycleDates(selectedCycle).map(d=>`<label class="choice dateChoice"><input type="checkbox" value="${d}"><span>${d}</span></label>`).join('');
   if(autoFillDateSet&&autoFillDateSet.cycle===selectedCycle&&autoFillDateSet.boss===selectedBoss){
     E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=autoFillDateSet.dates.has(x.value));
@@ -372,7 +376,9 @@ function autoFillProfileByName(force=false){
   // 若這筆資料屬於目前可選的兩週之一，也同步切到該週期。
   if(cycles().some(c=>c.id===s.cycle))selectedCycle=s.cycle;
 
-  selectedBoss=s.boss||selectedBoss;
+  // 只有在剛輸入/選擇角色、尚未手動切換王別時，才自動帶入既有王別。
+  // 已手動點選炎魔/龍王等時，保留目前王別，讓送出能新增該王報名。
+  if(!manualBossTouched)selectedBoss=s.boss||selectedBoss;
   selectedGroup=s.group||selectedGroup;
   selectedJob=s.job||jobs[selectedGroup]?.[0]||selectedJob;
   E.hasAlt.checked=!!s.hasAlt;
@@ -464,6 +470,8 @@ async function submitSignup(){
 
   // v47：送出報名不自動綁定 Google；綁定僅由「綁定到我的 Google 帳號」按鈕執行。
 
+  const submitCycle=selectedCycle;
+  const submitBoss=selectedBoss;
   const patch=currentProfilePatch();
 
   // v43：角色資訊是角色層級。只要本人/管理者送出，就同步更新此角色全部既有報名的職業與分身群組。
@@ -484,7 +492,7 @@ async function submitSignup(){
   }
 
   const selectedSet=new Set(dates);
-  const existingForBoss=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===selectedCycle&&s.boss===selectedBoss);
+  const existingForBoss=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===submitCycle&&s.boss===submitBoss);
   let added=0,changed=0,removed=0;
 
   // 已報名過此王時，送出後以目前勾選日期為準：
@@ -496,7 +504,7 @@ async function submitSignup(){
   }
 
   for(const date of dates){
-    const item={cycle:selectedCycle,boss:selectedBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:actorMeta(),updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
+    const item={cycle:submitCycle,boss:submitBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:actorMeta(),updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
     const existing=state.signups.find(s=>signupKey(s)===signupKey(item));
     if(existing){if(await updateSignupObj(existing,patch))changed++;continue;}
     item.id=docId(item);
