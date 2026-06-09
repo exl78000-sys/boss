@@ -17,6 +17,14 @@ let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob
 let manualBossTouched=false;
 let lastProfileLoadedFor='';
 let autoFillDateSet=null;
+// v51：使用者手動修改職業/多角色/分身群組後，避免背景同步又把表單覆蓋回舊資料。
+let manualProfileTouched=false;
+let manualProfilePlayer='';
+function markManualProfileTouched(){
+  manualProfileTouched=true;
+  manualProfilePlayer=norm(E.playerName?.value||'');
+  lastProfileLoadedFor='';
+}
 let lastTeams=null, lastMode='';
 
 function norm(s){return String(s||'').trim().toLowerCase();}
@@ -261,6 +269,8 @@ async function addSignup(item){
   item.createdBy=item.createdBy||actorMeta();
   item.updatedBy=actorMeta();
   await signupsRef.doc(docId(item)).set(item,{merge:true});
+  const localIdx=state.signups.findIndex(s=>signupKey(s)===signupKey(item));
+  if(localIdx>=0)state.signups[localIdx]={...state.signups[localIdx],...item}; else state.signups.push({...item});
 
   // v47：只建立/更新角色主檔資料，不自動綁定帳號。
   await upsertCharacterMaster(item.player,{claim:false});
@@ -284,6 +294,7 @@ async function updateSignupObj(s,patch){
   next.ownerEmail=firebase.firestore.FieldValue.delete();
   next.guestOwnerToken=firebase.firestore.FieldValue.delete();
   await signupsRef.doc(s.id||docId(s)).set(next,{merge:true});
+  Object.assign(s,next);
   await upsertCharacterMaster(s.player,{claim:false});
   return true;
 }
@@ -319,9 +330,12 @@ function bindTabs(){document.querySelectorAll('.tab').forEach(b=>b.addEventListe
 function bindActions(){
   [E.googleLoginBtn,E.googleLoginBtn2].forEach(b=>b&&(b.onclick=signInGoogle));
   [E.googleLogoutBtn,E.googleLogoutBtn2].forEach(b=>b&&(b.onclick=signOutGoogle));
-  E.hasAlt.onchange=()=>{E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);if(!E.hasAlt.checked)E.accountGroup.value='';};
+  E.hasAlt.onchange=()=>{markManualProfileTouched();E.accountGroup.classList.toggle('hidden',!E.hasAlt.checked);if(!E.hasAlt.checked)E.accountGroup.value='';};
+  E.accountGroup.addEventListener('input',markManualProfileTouched);
   E.playerName.addEventListener('input',()=>{
     manualBossTouched=false;
+    manualProfileTouched=false;
+    manualProfilePlayer='';
     const loaded=autoFillProfileByName(true);
     renderClaimBox();
     if(loaded){renderSignup();toast('已自動帶入既有職業/分身資料');}
@@ -333,6 +347,8 @@ function bindActions(){
     if(!name)return;
     E.playerName.value=name;
     manualBossTouched=false;
+    manualProfileTouched=false;
+    manualProfilePlayer='';
     lastProfileLoadedFor='';
     const loaded=autoFillProfileByName();
     renderSignup();
@@ -354,9 +370,9 @@ function renderSignup(){
   E.cycleBtns.innerHTML=cycles().map(c=>`<button class="choice ${c.id===selectedCycle?'active':''}" data-cycle="${c.id}" type="button">${c.label}</button>`).join('');
   E.cycleBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedCycle=b.dataset.cycle;renderSignup();renderAll();});
   E.classGroupBtns.innerHTML=Object.keys(jobs).map(g=>`<button class="choice ${g===selectedGroup?'active':''}" data-group="${g}" type="button">${g}</button>`).join('');
-  E.classGroupBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedGroup=b.dataset.group;selectedJob=jobs[selectedGroup][0];renderSignup();});
+  E.classGroupBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{markManualProfileTouched();selectedGroup=b.dataset.group;selectedJob=jobs[selectedGroup][0];renderSignup();});
   E.jobBtns.innerHTML=jobs[selectedGroup].map(j=>`<button class="choice ${j===selectedJob?'active':''}" data-job="${j}" type="button">${j}</button>`).join('');
-  E.jobBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedJob=b.dataset.job;renderSignup();});
+  E.jobBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{markManualProfileTouched();selectedJob=b.dataset.job;renderSignup();});
   E.bossBtns.innerHTML=bosses.map(b=>`<button class="choice ${b.name===selectedBoss?'active':''}" data-boss="${b.name}" type="button">${b.name}<br><small>${b.limit}人</small></button>`).join('');
   E.bossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{manualBossTouched=true;selectedBoss=b.dataset.boss;autoFillDateSet=null;renderSignup();});
   E.dateChecks.innerHTML=cycleDates(selectedCycle).map(d=>`<label class="choice dateChoice"><input type="checkbox" value="${d}"><span>${d}</span></label>`).join('');
@@ -382,6 +398,9 @@ function autoFillProfileByName(force=false){
   const name=E.playerName.value.trim();
   const key=norm(name);
   if(!key)return false;
+  if(manualProfileTouched && key===manualProfilePlayer){
+    return false;
+  }
   if(!force&&key===lastProfileLoadedFor)return false;
   const matches=state.signups.filter(s=>norm(s.player)===key).sort((a,b)=>timeValue(b)-timeValue(a));
   const savedProfile=myProfiles.find(p=>norm(p.player)===key);
@@ -474,6 +493,7 @@ async function updateWholePlayerProfile(player, patch){
     next.ownerEmail=firebase.firestore.FieldValue.delete();
     next.guestOwnerToken=firebase.firestore.FieldValue.delete();
     await signupsRef.doc(s.id||docId(s)).set(next,{merge:true});
+    Object.assign(s,next);
     updated++;
   }
   if(!denied)await upsertCharacterMaster(player,{claim:false});
