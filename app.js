@@ -353,52 +353,21 @@ function requirementStatus(team,boss){
 function canSatisfyHard(pool,boss){
   return bossRequirements(boss).filter(r=>r.hard).every(r=>pool.filter(r.fn).length>=r.count);
 }
-
-function hardRequirementStatus(team,boss){
-  return bossRequirements(boss).filter(r=>r.hard).map(r=>{const have=team.filter(r.fn).length;return {...r,have,missing:Math.max(0,r.count-have)}});
-}
-function isCompleteTeam(team,boss){
+function buildTeamsForDate(arr,boss,date='',usage=null){
+  // v16.2：細部必要職業優先；必要達標後改以其他/未出現職業與職業平衡優先；同隊避開相同分身群組。
+  let pool=[...arr].filter(hasJobInfo).sort(bySignupTime);
   const limit=bosses.find(b=>b.name===boss)?.limit||6;
-  if(team.length<limit)return false;
-  return hardRequirementStatus(team,boss).every(r=>r.missing===0);
-}
-function cloneUsage(usage){
-  if(!usage)return null;
-  const players=new Map();
-  usage.players.forEach((v,k)=>players.set(k,new Set(v)));
-  const groups=new Map();
-  usage.groups.forEach((v,k)=>groups.set(k,{pap:v.pap||0,locked:!!v.locked,members:[...(v.members||[])]}));
-  return {players,groups};
-}
-function buildTeamCandidate(arr,boss,date='',usage=null,requireComplete=false){
-  const limit=bosses.find(b=>b.name===boss)?.limit||6;
-  const localUsage=usage?cloneUsage(usage):null;
-  let pool=[...arr].filter(hasJobInfo).filter(m=>memberAllowedByUsage(m,date,boss,usage)).sort(bySignupTime);
-  const eligibleCount=pool.length;
-  if(!pool.length)return {team:[],complete:false,eligibleCount,missing:bossRequirements(boss)};
-  const team=[];
-  fillRequired(team,pool,boss,date,localUsage);
-  fillOutputBalanced(team,pool,boss,limit,date,localUsage);
-  const complete=isCompleteTeam(team,boss);
-  if(requireComplete&&!complete)return {team,complete:false,eligibleCount,missing:requirementStatus(team,boss)};
-  return {team,complete,eligibleCount,missing:requirementStatus(team,boss)};
-}
-function buildTeamsForDate(arr,boss,date='',usage=null,opts={}){
-  // 單王模式保留彈性：不足仍顯示隊伍與缺少職業。
-  // 週王模式會使用 requireComplete，只讓完整成團消耗玩家。
-  const requireComplete=!!opts.requireComplete;
+  if(!pool.length)return [];
   const teams=[];
-  let remaining=[...arr].filter(hasJobInfo).sort(bySignupTime);
   let safety=0;
-  while(remaining.length&&safety++<50){
-    const candidate=buildTeamCandidate(remaining,boss,date,usage,requireComplete);
-    if(!candidate.team.length)break;
-    if(requireComplete&&!candidate.complete)break;
-    const ids=new Set(candidate.team.map(m=>m.id||signupKey(m)));
-    remaining=remaining.filter(m=>!ids.has(m.id||signupKey(m)));
-    candidate.team.forEach(m=>markUsage(m,date,boss,usage));
-    teams.push(candidate.team);
-    if(!requireComplete && candidate.team.length < (bosses.find(b=>b.name===boss)?.limit||6)) break;
+  while(pool.length&&safety++<50){
+    const team=[];
+    fillRequired(team,pool,boss,date,usage);
+    fillOutputBalanced(team,pool,boss,limit,date,usage);
+    if(team.length){
+      team.forEach(m=>markUsage(m,date,boss,usage));
+      teams.push(team);
+    }else break;
   }
   return teams;
 }
@@ -410,71 +379,30 @@ function buildWeeklyTeams(cycle=adminCycle.value,boss=adminBoss.value,usage=null
   const result=[];
   dates.forEach(date=>{
     const arr=byDate[date].filter(s=>!used.has(norm(s.player)));
-    const teams=buildTeamsForDate(arr,boss,date,usage,{requireComplete:false});
+    const teams=buildTeamsForDate(arr,boss,date,usage);
     teams.forEach(team=>team.forEach(m=>used.add(norm(m.player))));
     if(teams.length)result.push({date,teams,total:byDate[date].length,arranged:arr.length});
   });
   return result;
 }
-function missingReasonForBoss(arr,boss,date,usage){
-  const eligible=arr.filter(s=>memberAllowedByUsage(s,date,boss,usage));
-  const candidate=buildTeamCandidate(eligible,boss,date,usage,true);
-  const limit=bosses.find(b=>b.name===boss)?.limit||6;
-  const reasons=[];
-  if(candidate.eligibleCount<limit)reasons.push(`人數不足（${candidate.eligibleCount}/${limit}）`);
-  const missing=hardRequirementStatus(candidate.team,boss).filter(r=>r.missing>0);
-  missing.forEach(r=>reasons.push(`缺少 ${r.label} ${r.missing}`));
-  if(!reasons.length && !candidate.complete)reasons.push('分身或角色限制導致無法成團');
-  return {eligible,candidate,reasons};
-}
 function buildWeekBossTeams(cycle=rosterCycle.value){
-  // v17 週王：依龍王＞困拉＞炎魔＞普拉；成團才消耗玩家，未成團不消耗並列入未成團區。
   const order=['龍王','困拉','炎魔','普拉'];
   const c=cycles().find(x=>x.id===cycle)||cycles()[0];
   const dateLabels=c.dates.map(d=>`${fmt(d)} ${dow(d)}`);
   const usage={players:new Map(),groups:new Map()};
-  const days=new Map(dateLabels.map(d=>[d,{date:d,teamsByBoss:[],total:0,arranged:0}]));
-  const unformed=[];
-
-  for(const boss of order){
-    // 同一個王先盡可能成團；每一輪挑「可完整成團且有效報名人數最多」的日期。
-    while(true){
-      const candidates=[];
-      for(const date of dateLabels){
-        const original=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
-        const available=original.filter(s=>memberAllowedByUsage(s,date,boss,usage));
-        const candidate=buildTeamCandidate(available,boss,date,usage,true);
-        if(candidate.complete){
-          candidates.push({date,boss,originalCount:original.length,availableCount:available.length,team:candidate.team});
-        }
-      }
-      if(!candidates.length)break;
-      candidates.sort((a,b)=>b.availableCount-a.availableCount||dateOrder(a.date,cycle)-dateOrder(b.date,cycle));
-      const pick=candidates[0];
-      pick.team.forEach(m=>markUsage(m,pick.date,boss,usage));
-      const day=days.get(pick.date);
-      let block=day.teamsByBoss.find(x=>x.boss===boss);
-      if(!block){block={boss,teams:[],total:0,arranged:0};day.teamsByBoss.push(block)}
-      block.teams.push(pick.team);
-      block.total+=pick.originalCount;
-      block.arranged+=pick.team.length;
-      day.total+=pick.originalCount;
-      day.arranged+=pick.team.length;
-    }
-  }
-
-  // 未成團：所有沒有被消耗且仍受理的報名，依王/日期列出，顯示原因。
-  for(const boss of order){
-    for(const date of dateLabels){
-      const original=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
-      const remaining=original.filter(s=>memberAllowedByUsage(s,date,boss,usage));
-      if(!remaining.length)continue;
-      const info=missingReasonForBoss(remaining,boss,date,usage);
-      unformed.push({boss,date,members:remaining.sort(bySignupTime),reasons:info.reasons,total:original.length,available:remaining.length});
-    }
-  }
-  const result=[...days.values()].filter(day=>day.teamsByBoss.length);
-  result.unformed=unformed;
+  const result=[];
+  dateLabels.forEach(date=>{
+    const day={date,teamsByBoss:[],total:0,arranged:0};
+    order.forEach(boss=>{
+      const arr=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date&&memberAllowedByUsage(s,date,boss,usage));
+      const original=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date).length;
+      const teams=buildTeamsForDate(arr,boss,date,usage);
+      const arranged=teams.reduce((sum,t)=>sum+t.length,0);
+      day.total+=original; day.arranged+=arranged;
+      if(teams.length)day.teamsByBoss.push({boss,teams,total:original,arranged});
+    });
+    if(day.teamsByBoss.length)result.push(day);
+  });
   return result;
 }
 function dateOrder(label,cycleId=adminCycle.value){const c=cycles().find(x=>x.id===cycleId);return c?c.dates.map(d=>`${fmt(d)} ${dow(d)}`).indexOf(label):999}
@@ -531,18 +459,12 @@ function renderTeams(data,target=teamResult,ctx=lastTeamsContext){
   const conflicts=collectConflicts(data,ctx);
   const summary=conflictSummary(conflicts);
   if(lastTeamMode==='weekBoss'){
-    const unformedHtml=renderUnformed(data.unformed||[]);
-    target.innerHTML=summary+data.map(day=>`<div class="day-block"><h2>${day.date}｜週王｜原報名 ${day.total} 筆｜已排 ${day.arranged} 人</h2>${day.teamsByBoss.map(block=>`<h3 class="boss-subtitle">${block.boss}｜原報名 ${block.total}｜已排 ${block.arranged}</h3>${block.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts,{...ctx,boss:block.boss})).join('')}`).join('')}</div>`).join('')+unformedHtml;
+    target.innerHTML=summary+data.map(day=>`<div class="day-block"><h2>${day.date}｜週王｜原報名 ${day.total} 筆｜已排 ${day.arranged} 人</h2>${day.teamsByBoss.map(block=>`<h3 class="boss-subtitle">${block.boss}｜原報名 ${block.total}｜已排 ${block.arranged}</h3>${block.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts,{...ctx,boss:block.boss})).join('')}`).join('')}</div>`).join('');
   }else if(lastTeamMode==='week'){
     target.innerHTML=summary+data.map(day=>`<div class="day-block"><h2>${day.date}｜原報名 ${day.total} 筆｜可排 ${day.arranged} 人</h2>${day.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts,ctx)).join('')}</div>`).join('');
   }else{
     target.innerHTML=summary+data.map((team,i)=>teamHTML(team,i,ctx.date,conflicts,ctx)).join('');
   }
-}
-
-function renderUnformed(list){
-  if(!list.length)return '';
-  return `<div class="unformed-block"><h2>未成團</h2>${list.map(x=>`<div class="unformed-card"><h3>${x.boss}｜${x.date}</h3><div class="missing-line">原因：${x.reasons.join('、')}</div><div class="unformed-members">${x.members.map(m=>`<span>${m.player}｜${m.job}${displayAccount(m)}</span>`).join('')}</div></div>`).join('')}</div>`;
 }
 function teamHTML(team,i,date,conflicts=new Map(),ctx=lastTeamsContext){
   const req=requirementStatus(team,ctx.boss);
@@ -568,4 +490,117 @@ function renderAllData(){allData.innerHTML=state.signups.length?state.signups.sl
 exportData.onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-signups-cloud.json';a.click();URL.revokeObjectURL(a.href)};
 importData.onchange=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=async()=>{try{const data=JSON.parse(r.result);const arr=Array.isArray(data)?data:(data.signups||[]);const batch=writeBatch(db);arr.forEach(x=>{const item={...x,id:x.id||docIdForSignup(x),createdAt:x.createdAt||x.createdAtText||new Date().toISOString()};batch.set(doc(db,'signups',item.id),{...item,createdAtText:item.createdAt,createdAtServer:serverTimestamp()});});await batch.commit();toast('匯入成功')}catch(err){console.error(err);toast('匯入失敗')}};r.readAsText(file)};
 clearData.onclick=async()=>{if(confirm('確定清除 Firebase 全部報名？')){const snap=await getDocs(signupsCol);const batch=writeBatch(db);snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();toast('已清除')}};
+
+
+// ===== v17.1 override: 週王最大成團數優先 / 成團才消耗 / 未成團區 =====
+function cloneUsage(usage){
+  const u={players:new Map(),groups:new Map()};
+  usage.players.forEach((set,k)=>u.players.set(k,new Set([...set])));
+  usage.groups.forEach((rec,k)=>u.groups.set(k,{pap:rec.pap||0,locked:!!rec.locked,members:[...(rec.members||[])]}));
+  return u;
+}
+function buildCandidateTeamForDate(arr,boss,date,usage){
+  let pool=[...arr].filter(hasJobInfo).filter(m=>memberAllowedByUsage(m,date,boss,usage)).sort(bySignupTime);
+  const limit=bosses.find(b=>b.name===boss)?.limit||6;
+  const team=[];
+  fillRequired(team,pool,boss,date,usage);
+  fillOutputBalanced(team,pool,boss,limit,date,usage);
+  return team;
+}
+function hardRequirementsMet(team,boss){
+  return bossRequirements(boss).filter(r=>r.hard).every(r=>team.filter(r.fn).length>=r.count);
+}
+function isCompleteTeam(team,boss){
+  const limit=bosses.find(b=>b.name===boss)?.limit||6;
+  if(team.length<limit)return false;
+  if(!hardRequirementsMet(team,boss))return false;
+  return true;
+}
+function unformedReason(arr,boss,team){
+  const limit=bosses.find(b=>b.name===boss)?.limit||6;
+  const reasons=[];
+  if(arr.length<limit)reasons.push(`人數不足（${arr.length}/${limit}）`);
+  const req=requirementStatus(team,boss).filter(r=>r.hard&&r.missing>0);
+  req.forEach(r=>reasons.push(`缺少 ${r.label} ${r.missing}`));
+  if(arr.length>=limit && !req.length && team.length<limit)reasons.push(`分身限制或可用人數不足（${team.length}/${limit}）`);
+  return reasons.length?reasons:['未達成團條件'];
+}
+function buildWeekBossTeams(cycle=rosterCycle.value){
+  const order=['龍王','困拉','炎魔','普拉'];
+  const c=cycles().find(x=>x.id===cycle)||cycles()[0];
+  const dateLabels=c.dates.map(d=>`${fmt(d)} ${dow(d)}`);
+  const usage={players:new Map(),groups:new Map()};
+  const result=[];
+  const unformed=[];
+
+  // 週王：龍王開到不能開，再困拉、炎魔、普拉。每次都選「可用報名人數最多且可完整成團」的日期。
+  for(const boss of order){
+    let teamNo=0;
+    while(true){
+      const candidates=[];
+      for(const date of dateLabels){
+        const all=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
+        const available=all.filter(s=>memberAllowedByUsage(s,date,boss,usage));
+        if(!available.length)continue;
+        const team=buildCandidateTeamForDate(available,boss,date,usage);
+        if(isCompleteTeam(team,boss)){
+          candidates.push({boss,date,team,total:all.length,availableCount:available.length});
+        }
+      }
+      if(!candidates.length)break;
+      candidates.sort((a,b)=>
+        b.availableCount-a.availableCount ||
+        b.total-a.total ||
+        dateOrder(a.date,cycle)-dateOrder(b.date,cycle) ||
+        bySignupTime(a.team[0]||{},b.team[0]||{})
+      );
+      const chosen=candidates[0];
+      chosen.team.forEach(m=>markUsage(m,chosen.date,boss,usage));
+      result.push({
+        date:chosen.date,
+        teamsByBoss:[{boss,teams:[chosen.team],total:chosen.total,arranged:chosen.team.length,teamNo:++teamNo}],
+        total:chosen.total,
+        arranged:chosen.team.length
+      });
+    }
+  }
+
+  // 未成團：只列出沒有被任何成功隊伍消耗、仍有報名且無法成團的人。
+  for(const boss of order){
+    for(const date of dateLabels){
+      const all=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
+      const available=all.filter(s=>memberAllowedByUsage(s,date,boss,usage));
+      if(!available.length)continue;
+      const team=buildCandidateTeamForDate(available,boss,date,usage);
+      if(isCompleteTeam(team,boss))continue;
+      unformed.push({boss,date,members:available.sort(bySignupTime),reasons:unformedReason(available,boss,team)});
+    }
+  }
+  result.unformed=unformed;
+  return result;
+}
+function renderUnformed(unformed=[]){
+  if(!unformed.length)return '';
+  return `<div class="unformed-block"><h2>未成團</h2>${unformed.map(u=>`
+    <div class="unformed-card">
+      <h3>${u.boss}｜${u.date}</h3>
+      <div class="missing-line">原因：${u.reasons.join('、')}</div>
+      <div class="unformed-members">${u.members.map(m=>`<div class="slot"><b>候補</b><div>${m.player}<div class="job">${m.group}｜${m.job}${displayAccount(m)}｜報名 ${signupTime(m)}</div></div><span>${tag(m)}</span></div>`).join('')}</div>
+    </div>`).join('')}</div>`;
+}
+function renderTeams(data,target=teamResult,ctx=lastTeamsContext){
+  target.classList.remove('empty');
+  if(!data.length && !(data.unformed&&data.unformed.length)){target.innerHTML='<div class="empty">目前沒有可編排的隊伍</div>';return}
+  const conflicts=collectConflicts(data,ctx);
+  const summary=conflictSummary(conflicts);
+  if(lastTeamMode==='weekBoss'){
+    const formed=data.map(day=>`<div class="day-block"><h2>${day.date}｜週王｜已排 ${day.arranged} 人</h2>${day.teamsByBoss.map(block=>`<h3 class="boss-subtitle">${block.boss}｜已排 ${block.arranged}</h3>${block.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts,{...ctx,boss:block.boss})).join('')}`).join('')}</div>`).join('');
+    target.innerHTML=summary+formed+renderUnformed(data.unformed||[]);
+  }else if(lastTeamMode==='week'){
+    target.innerHTML=summary+data.map(day=>`<div class="day-block"><h2>${day.date}｜原報名 ${day.total} 筆｜可排 ${day.arranged} 人</h2>${day.teams.map((team,i)=>teamHTML(team,i,day.date,conflicts,ctx)).join('')}</div>`).join('');
+  }else{
+    target.innerHTML=summary+data.map((team,i)=>teamHTML(team,i,ctx.date,conflicts,ctx)).join('');
+  }
+}
+
 init();
