@@ -36,6 +36,41 @@ function dateLabel(d){return `${fmt(d)} ${dow(d)}`;}
 function cycles(){const now=new Date();const th=addDays(now,(4-now.getDay()+7)%7);return [0,7].map(o=>{const s=addDays(th,o),e=addDays(s,6);return {id:`${fmt(s)}-${fmt(e)}`,label:`${fmt(s)} - ${fmt(e)}`,dates:Array.from({length:7},(_,i)=>addDays(s,i))};});}
 function cycleDates(cycleId){const c=cycles().find(x=>x.id===cycleId)||cycles()[0];return c.dates.map(dateLabel);}
 function dateOrder(label,cycleId=selectedCycle){return cycleDates(cycleId).indexOf(label);}
+function cycleObj(startDate){
+  const s=new Date(startDate),e=addDays(s,6);
+  return {id:`${fmt(s)}-${fmt(e)}`,label:`${fmt(s)} - ${fmt(e)}`,dates:Array.from({length:7},(_,i)=>addDays(s,i))}
+}
+function thursdayOfWeek(d){
+  const x=new Date(d);
+  x.setHours(0,0,0,0);
+  const diff=(x.getDay()-4+7)%7;
+  return addDays(x,-diff);
+}
+function cycles(){
+  // 報名頁開放三個週期：上一週、本週、下一週。
+  // 週期固定週四～週三；週三當天仍屬於本週，週四才切換。
+  const current=thursdayOfWeek(new Date());
+  return [-7,0,7].map(offset=>cycleObj(addDays(current,offset)));
+}
+function cycleSortValue(id){
+  const m=String(id).match(/(\d+)\/(\d+)/);
+  if(!m)return 999999;
+  return Number(m[1])*100+Number(m[2]);
+}
+function allCycleOptions(){
+  const map=new Map();
+  cycles().forEach(c=>map.set(c.id,c));
+  (state.signups||[]).forEach(s=>{
+    if(s.cycle&&!map.has(s.cycle))map.set(s.cycle,{id:s.cycle,label:s.cycle,dates:[]});
+  });
+  return [...map.values()].sort((a,b)=>cycleSortValue(a.id)-cycleSortValue(b.id));
+}
+function cycleDateLabels(cycleId){
+  const c=cycles().find(x=>x.id===cycleId);
+  if(c&&c.dates&&c.dates.length)return c.dates.map(d=>`${fmt(d)} ${dow(d)}`);
+  const dates=[...new Set((state.signups||[]).filter(s=>s.cycle===cycleId).map(s=>s.date).filter(Boolean))];
+  return dates.sort((a,b)=>dateOrderForCycle(a,cycleId)-dateOrderForCycle(b,cycleId));
+}
 function toast(msg){if(!E.toast)return alert(msg);E.toast.textContent=msg;E.toast.classList.remove('hidden');setTimeout(()=>E.toast.classList.add('hidden'),2200);}
 function setStatus(msg,cls='sync-warn'){if(E.syncStatus){E.syncStatus.textContent='同步狀態：'+msg;E.syncStatus.className='hint '+cls;}}
 function userMeta(){
@@ -320,6 +355,60 @@ async function claimUnboundPlayerRecords(player, showToast=false){
   return 1;
 }
 
+
+/* v56 cycle fix：週期固定週四～週三。
+   例：6/11–6/17 會顯示到 6/17 23:59；6/18 才切換。
+*/
+function localTodayMidnight(){
+  const d=new Date();
+  d.setHours(0,0,0,0);
+  return d;
+}
+function getCycleStartForDate(d){
+  const x=new Date(d);
+  x.setHours(0,0,0,0);
+  const day=x.getDay(); // 0日 1一 ... 4四
+  const diff=(day-4+7)%7;
+  return addDays(x,-diff);
+}
+function makeCycleFromStart(s){
+  const start=new Date(s);
+  start.setHours(0,0,0,0);
+  const end=addDays(start,6);
+  return {
+    id:`${fmt(start)}-${fmt(end)}`,
+    label:`${fmt(start)} - ${fmt(end)}`,
+    dates:Array.from({length:7},(_,i)=>addDays(start,i))
+  };
+}
+function cycles(){
+  const currentStart=getCycleStartForDate(localTodayMidnight());
+  return [
+    makeCycleFromStart(addDays(currentStart,-7)),
+    makeCycleFromStart(currentStart),
+    makeCycleFromStart(addDays(currentStart,7))
+  ];
+}
+function cycleSortValue(id){
+  const m=String(id||'').match(/(\d+)\/(\d+)/);
+  if(!m)return 999999;
+  return Number(m[1])*100+Number(m[2]);
+}
+function allCycleOptions(){
+  const map=new Map();
+  cycles().forEach(c=>map.set(c.id,c));
+  (state.signups||[]).forEach(s=>{
+    if(s.cycle&&!map.has(s.cycle))map.set(s.cycle,{id:s.cycle,label:s.cycle,dates:[]});
+  });
+  return [...map.values()].sort((a,b)=>cycleSortValue(a.id)-cycleSortValue(b.id));
+}
+function cycleDateLabels(cycleId){
+  const current=cycles().find(x=>x.id===cycleId);
+  if(current&&current.dates&&current.dates.length)return current.dates.map(d=>`${fmt(d)} ${dow(d)}`);
+  const dates=[...new Set((state.signups||[]).filter(s=>s.cycle===cycleId).map(s=>s.date).filter(Boolean))];
+  return dates.sort((a,b)=>dateOrderForCycle(a,cycleId)-dateOrderForCycle(b,cycleId));
+}
+
 function init(){
   selectedCycle=cycles()[0].id;
   bindTabs();bindActions();renderSignup();renderAuth();renderAll();initFirebase();
@@ -564,7 +653,7 @@ async function submitSignup(){
   }
 
   await saveMyCharacterProfile(name);
-  // v55：送出後保留目前勾選的日期，不自動清空，方便連續報名/修改。
+  E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);E.selectAllDates.textContent='日期全選';
   const parts=[];
   if(added)parts.push(`新增 ${added} 筆`);
   if(changed||profileUpdated)parts.push(`已更改 ${Math.max(changed,profileUpdated)} 筆`);
@@ -1009,3 +1098,5 @@ window.adminDeletePlayer=adminDeletePlayer;
 window.adminUnlinkPlayer=adminUnlinkPlayer;
 window.addEventListener('DOMContentLoaded',init);
 })();
+
+console.log('[v57 cycle]', cycles().map(c=>c.id));
