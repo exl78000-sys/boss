@@ -47,10 +47,10 @@ function thursdayOfWeek(d){
   return addDays(x,-diff);
 }
 function cycles(){
-  // 報名頁開放三個週期：上一週、本週、下一週。
+  // 報名頁開放三個週期：本週、下一週、下下週。
   // 週期固定週四～週三；週三當天仍屬於本週，週四才切換。
   const current=thursdayOfWeek(new Date());
-  return [-7,0,7].map(offset=>cycleObj(addDays(current,offset)));
+  return [0,7,14].map(offset=>cycleObj(addDays(current,offset)));
 }
 function cycleSortValue(id){
   const m=String(id).match(/(\d+)\/(\d+)/);
@@ -384,9 +384,9 @@ function makeCycleFromStart(s){
 function cycles(){
   const currentStart=getCycleStartForDate(localTodayMidnight());
   return [
-    makeCycleFromStart(addDays(currentStart,-7)),
     makeCycleFromStart(currentStart),
-    makeCycleFromStart(addDays(currentStart,7))
+    makeCycleFromStart(addDays(currentStart,7)),
+    makeCycleFromStart(addDays(currentStart,14))
   ];
 }
 function cycleSortValue(id){
@@ -1099,4 +1099,4 @@ window.adminUnlinkPlayer=adminUnlinkPlayer;
 window.addEventListener('DOMContentLoaded',init);
 })();
 
-console.log('[v57 cycle]', cycles().map(c=>c.id));
+console.log('[v58 cycle]', cycles().map(c=>c.id));
