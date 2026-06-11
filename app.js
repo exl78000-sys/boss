@@ -12,7 +12,7 @@ const E={};
 
 let db=null, auth=null, signupsRef=null, charactersRef=null, charactersUnsub=null, adminEventsRef=null, eventUnsub=null, state={signups:[],characters:[],adminEvents:[]};
 let currentUser=null, myProfiles=[], profileUnsub=null;
-let selectedCycle='', selectedBoss='龍王', selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
+let selectedCycle='', selectedBoss='龍王', selectedBosses=['龍王'], selectedGroup='劍士', selectedJob='黑騎', selectedRosterBoss='龍王';
 // v49：使用者手動切換王別後，不讓角色自動帶入/Google profile 同步把王別切回舊王，避免新增其他王報名看起來沒生效。
 let manualBossTouched=false;
 let lastProfileLoadedFor='';
@@ -373,8 +373,19 @@ function renderSignup(){
   E.classGroupBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{markManualProfileTouched();selectedGroup=b.dataset.group;selectedJob=jobs[selectedGroup][0];renderSignup();});
   E.jobBtns.innerHTML=jobs[selectedGroup].map(j=>`<button class="choice ${j===selectedJob?'active':''}" data-job="${j}" type="button">${j}</button>`).join('');
   E.jobBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{markManualProfileTouched();selectedJob=b.dataset.job;renderSignup();});
-  E.bossBtns.innerHTML=bosses.map(b=>`<button class="choice ${b.name===selectedBoss?'active':''}" data-boss="${b.name}" type="button">${b.name}<br><small>${b.limit}人</small></button>`).join('');
-  E.bossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{manualBossTouched=true;selectedBoss=b.dataset.boss;autoFillDateSet=null;renderSignup();});
+  E.bossBtns.innerHTML=bosses.map(b=>`<button class="choice ${selectedBosses.includes(b.name)?'active':''}" data-boss="${b.name}" type="button">${b.name}<br><small>${b.limit}人</small></button>`).join('');
+  E.bossBtns.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    manualBossTouched=true;
+    const name=b.dataset.boss;
+    if(selectedBosses.includes(name)){
+      if(selectedBosses.length>1) selectedBosses=selectedBosses.filter(x=>x!==name);
+    }else{
+      selectedBosses=[...selectedBosses,name];
+    }
+    selectedBoss=selectedBosses[selectedBosses.length-1]||name;
+    autoFillDateSet=null;
+    renderSignup();
+  });
   E.dateChecks.innerHTML=cycleDates(selectedCycle).map(d=>`<label class="choice dateChoice"><input type="checkbox" value="${d}"><span>${d}</span></label>`).join('');
   if(autoFillDateSet&&autoFillDateSet.cycle===selectedCycle&&autoFillDateSet.boss===selectedBoss){
     E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=autoFillDateSet.dates.has(x.value));
@@ -417,7 +428,7 @@ function autoFillProfileByName(force=false){
 
   // 只有在剛輸入/選擇角色、尚未手動切換王別時，才自動帶入既有王別。
   // 已手動點選炎魔/龍王等時，保留目前王別，讓送出能新增該王報名。
-  if(!manualBossTouched)selectedBoss=s.boss||selectedBoss;
+  if(!manualBossTouched){selectedBoss=s.boss||selectedBoss; selectedBosses=[selectedBoss];}
   selectedGroup=s.group||selectedGroup;
   selectedJob=s.job||jobs[selectedGroup]?.[0]||selectedJob;
   E.hasAlt.checked=!!s.hasAlt;
@@ -508,14 +519,12 @@ async function submitSignup(){
   if(E.hasAlt.checked&&!E.accountGroup.value.trim())return toast('請輸入分身群組名稱');
   if(playerLockedByOther(name)){deniedEditToast();return;}
 
-  // v47：送出報名不自動綁定 Google；綁定僅由「綁定到我的 Google 帳號」按鈕執行。
-
+  // v54：送出報名不自動綁定 Google；綁定只透過「綁定到我的 Google 帳號」按鈕執行。
+  // v54：要打的王改為可複選，一次送出會對每個選取王別與日期建立/更新報名。
   const submitCycle=selectedCycle;
-  const submitBoss=selectedBoss;
+  const submitBosses=[...new Set((selectedBosses&&selectedBosses.length?selectedBosses:[selectedBoss]).filter(Boolean))];
   const patch=currentProfilePatch();
 
-  // v43：角色資訊是角色層級。只要本人/管理者送出，就同步更新此角色全部既有報名的職業與分身群組。
-  // 這樣綁定帳號後改職業，或改報不同王時，不會只改到部分日期/部分王。
   const allPlayerRecords=state.signups.filter(s=>norm(s.player)===norm(name));
   let profileUpdated=0;
   if(allPlayerRecords.length){
@@ -532,26 +541,30 @@ async function submitSignup(){
   }
 
   const selectedSet=new Set(dates);
-  const existingForBoss=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===submitCycle&&s.boss===submitBoss);
   let added=0,changed=0,removed=0;
 
-  // 已報名過此王時，送出後以目前勾選日期為準：
-  // 綠燈保留/更新，取消勾選的日期會自動取消。
-  if(existingForBoss.length){
-    for(const s of existingForBoss){
-      if(!selectedSet.has(s.date)){if(await deleteSignupObj(s))removed++;}
+  for(const submitBoss of submitBosses){
+    const existingForBoss=state.signups.filter(s=>norm(s.player)===norm(name)&&s.cycle===submitCycle&&s.boss===submitBoss);
+
+    // 已報名過此王時，送出後以目前勾選日期為準：
+    // 綠燈保留/更新，取消勾選的日期會自動取消。
+    if(existingForBoss.length){
+      for(const s of existingForBoss){
+        if(!selectedSet.has(s.date)){if(await deleteSignupObj(s))removed++;}
+      }
+    }
+
+    for(const date of dates){
+      const item={cycle:submitCycle,boss:submitBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:actorMeta(),updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
+      const existing=state.signups.find(s=>signupKey(s)===signupKey(item));
+      if(existing){if(await updateSignupObj(existing,patch))changed++;continue;}
+      item.id=docId(item);
+      if(await addSignup(item))added++;
     }
   }
 
-  for(const date of dates){
-    const item={cycle:submitCycle,boss:submitBoss,date,player:name,group:selectedGroup,job:selectedJob,hasAlt:E.hasAlt.checked,accountGroup:E.hasAlt.checked?E.accountGroup.value.trim():'',createdAt:new Date().toISOString(),createdBy:actorMeta(),updatedAt:new Date().toISOString(),updatedBy:actorMeta()};
-    const existing=state.signups.find(s=>signupKey(s)===signupKey(item));
-    if(existing){if(await updateSignupObj(existing,patch))changed++;continue;}
-    item.id=docId(item);
-    if(await addSignup(item))added++;
-  }
   await saveMyCharacterProfile(name);
-  E.dateChecks.querySelectorAll('input').forEach(x=>x.checked=false);E.selectAllDates.textContent='日期全選';
+  // v55：送出後保留目前勾選的日期，不自動清空，方便連續報名/修改。
   const parts=[];
   if(added)parts.push(`新增 ${added} 筆`);
   if(changed||profileUpdated)parts.push(`已更改 ${Math.max(changed,profileUpdated)} 筆`);
