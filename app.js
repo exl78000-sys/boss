@@ -821,6 +821,8 @@ function canAddToTeam(team,cand,boss){
   const limit=bossLimit(boss); if(team.length>=limit)return false;
   const mageCount=team.filter(isMage).length;
   if((boss==='困拉'||boss==='炎魔')&&isMage(cand)&&mageCount>=2)return false;
+  // 龍王次必要：刀賊最多 2 位。
+  if(boss==='龍王'&&cand.job==='刀賊'&&team.filter(m=>m.job==='刀賊').length>=2)return false;
   return true;
 }
 function usageCanUse(m,date,boss,usage){
@@ -863,7 +865,8 @@ function reqStatus(team,boss){
     return [
       {label:'黑騎',count:2,have:Math.min(dk,2),missing:Math.max(0,2-dk)},
       {label:'弓箭手',count:2,have:Math.min(ar,2),missing:Math.max(0,2-ar)},
-      {label:'拳霸',count:1,have:Math.min(bu,1),missing:Math.max(0,1-bu)}
+      {label:'拳霸',count:1,have:Math.min(bu,1),missing:Math.max(0,1-bu)},
+      {label:'刀賊',count:2,have:Math.min(team.filter(m=>m.job==='刀賊').length,2),missing:Math.max(0,2-team.filter(m=>m.job==='刀賊').length),soft:true}
     ];
   }
   if(boss==='困拉'){
@@ -909,6 +912,14 @@ function pickCandidate(pool,team,boss,pred){
   pool.splice(pool.indexOf(chosen),1);
   team.push(chosen);
   return chosen;
+}
+function fillDragonSecondaryRequirements(pool,team,boss){
+  if(boss!=='龍王')return;
+  // 次必要：刀賊最多 2。必要職業完成後、一般輸出補位前優先補刀賊。
+  while(team.filter(m=>m.job==='刀賊').length<2){
+    const picked=pickCandidate(pool,team,boss,m=>m.job==='刀賊');
+    if(!picked)break;
+  }
 }
 function outputPriority(boss,x){
   if(boss==='龍王'){
@@ -971,6 +982,7 @@ function buildTeam(available,boss){
     let picked=pickCandidate(pool,team,boss,unit.fn);
     if(!picked&&unit.fallback)picked=pickCandidate(pool,team,boss,unit.fallback);
   }
+  fillDragonSecondaryRequirements(pool,team,boss);
   fillTeam(pool,team,boss);
   return team;
 }
