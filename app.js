@@ -1164,21 +1164,23 @@ function papMagePriority(m){
   return 2;
 }
 function papOutputPriority(m,team){
-  // 普拉輸出職業：
-  // 有弓箭手時，標賊 1 位優先。
+  // 普拉補位：
+  // 條件成立後優先補劍士 / 刀賊，數量不限；但劍士仍受 canUsePapWarriorForFill 限制。
+  // 輸出職業：劍士 > 盜賊 > 槍手。
   const hasArcher=team.some(isArcher);
   const sinCount=team.filter(x=>x.job==='標賊').length;
-  if(hasArcher && m.job==='標賊' && sinCount<1)return -1;
+  if(hasArcher && m.job==='標賊' && sinCount<1)return -1; // 有弓時，標賊 1 優先
 
-  // 輸出順位：劍士 > 盜賊 > 槍手 > 其他
   if(m.group==='劍士')return 0;
-  if(m.group==='盜賊')return 1;
-  if(m.job==='槍手')return 2;
-  if(m.group==='海盜')return 3;
-  if(m.group==='弓箭手')return 4;
-  if(m.group==='法師')return 5;
+  if(m.job==='刀賊')return 1;
+  if(m.group==='盜賊')return 2;
+  if(m.job==='槍手')return 3;
+  if(m.group==='海盜')return 4;
+  if(m.group==='弓箭手')return 5;
+  if(m.group==='法師')return 6;
   return 9;
 }
+
 function canUsePapMageForFill(pool,team,cand){
   if(!isMage(cand))return true;
   const mageCount=team.filter(isMage).length;
@@ -1190,14 +1192,14 @@ function canUsePapWarriorForFill(pool,team,cand){
   if(!isWarrior(cand))return true;
   const warriorCount=team.filter(isWarrior).length;
   if(warriorCount<1)return true; // 劍士 1 位優先
-  if(warriorCount>=3)return false;
   if(warriorCount<2){
-    // 第二位劍士：只有其他職業都不適合時才選
-    return !pool.some(x=>x!==cand && !isWarrior(x) && canAddToTeam(team,x,'普拉') && canUsePapMageForFill(pool,team,x));
+    // 第二位劍士：正常允許，但排序仍會讓刀賊/盜賊/槍手依規則競爭。
+    return true;
   }
-  // 第三位劍士：除非真的沒人才補
+  // 第三位劍士：除非真的沒人才補。
   return !pool.some(x=>x!==cand && !isWarrior(x) && canAddToTeam(team,x,'普拉') && canUsePapMageForFill(pool,team,x));
 }
+
 function pickPapCandidate(pool,team,pred,sorter){
   const candidates=pool.filter(x=>pred(x)&&canAddToTeam(team,x,'普拉')).sort(sorter||byTime);
   if(!candidates.length)return null;
