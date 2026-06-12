@@ -821,7 +821,7 @@ function canAddToTeam(team,cand,boss){
   const limit=bossLimit(boss); if(team.length>=limit)return false;
   const mageCount=team.filter(isMage).length;
   if((boss==='困拉'||boss==='炎魔')&&isMage(cand)&&mageCount>=2)return false;
-  // 龍王次必要：刀賊最多 2 位。
+  // 龍王次必要：刀賊優先 1、最多 2 位。
   if(boss==='龍王'&&cand.job==='刀賊'&&team.filter(m=>m.job==='刀賊').length>=2)return false;
   return true;
 }
@@ -915,7 +915,9 @@ function pickCandidate(pool,team,boss,pred){
 }
 function fillDragonSecondaryRequirements(pool,team,boss){
   if(boss!=='龍王')return;
-  // 次必要：刀賊最多 2。必要職業完成後、一般輸出補位前優先補刀賊。
+  // 龍王次必要：必要職業完成後，必須優先補刀賊。
+  // 目標：至少 1 位刀賊，最多 2 位刀賊。
+  // 若有符合條件且不違反分身群組的刀賊，會先補刀賊，再進入一般補位。
   while(team.filter(m=>m.job==='刀賊').length<2){
     const picked=pickCandidate(pool,team,boss,m=>m.job==='刀賊');
     if(!picked)break;
