@@ -1172,6 +1172,31 @@ function papSecondMagePriority(m){
   if(m.job==='火毒'||m.job==='冰雷')return 1;
   return 2;
 }
+
+function papSecondMagePriorityByTeam(m,team){
+  // 普拉 2 法最佳組合：冰雷/火毒 + 主教。
+  // 如果第一法已經是主教，第二法改優先冰雷/火毒，避免雙主教。
+  const hasBishop=team.some(x=>x.job==='主教');
+  const hasElement=team.some(x=>x.job==='火毒'||x.job==='冰雷');
+
+  if(hasBishop&&!hasElement){
+    if(m.job==='火毒'||m.job==='冰雷')return 0;
+    if(m.job==='主教')return 2;
+    return 3;
+  }
+
+  if(!hasBishop&&hasElement){
+    if(m.job==='主教')return 0;
+    if(m.job==='火毒'||m.job==='冰雷')return 1;
+    return 3;
+  }
+
+  // 沒有法師或狀態特殊時，維持第二法主教優先。
+  if(m.job==='主教')return 0;
+  if(m.job==='火毒'||m.job==='冰雷')return 1;
+  return 3;
+}
+
 function papOutputPriority(m,team){
   const hasArcher=team.some(isArcher);
 
@@ -1219,7 +1244,7 @@ function buildPapTeam(pool){
 
   // 2. 次必要：1 法，優先主教。
   if(team.filter(isMage).length<2){
-    pickPapCandidate(pool,team,isMage,(a,b)=>papSecondMagePriority(a)-papSecondMagePriority(b)||byTime(a,b));
+    pickPapCandidate(pool,team,isMage,(a,b)=>papSecondMagePriorityByTeam(a,team)-papSecondMagePriorityByTeam(b,team)||byTime(a,b));
   }
 
   // 3. 次必要：1 弓。
