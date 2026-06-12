@@ -867,9 +867,10 @@ function reqUnits(boss){
     {label:'主教',key:'bishop',fn:m=>m.job==='主教',fallback:isMage,hard:true,groupLabel:'法師'}
   ];
   if(boss==='普拉')return [
-    {label:'冰雷/火毒',key:'elementMage',fn:isElementMage,hard:true},
-    {label:'主教',key:'bishop',fn:isBishop,hard:false,soft:true},
-    {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true}
+    {label:'法師',key:'mage',fn:isMage,hard:true},
+    {label:'主教',key:'bishop',fn:m=>m.job==='主教',hard:false,soft:true},
+    {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true},
+    {label:'標賊',key:'sin',fn:m=>m.job==='標賊',hard:false,soft:true}
   ];
   return [];
 }
@@ -1160,11 +1161,11 @@ function fillTeam(pool,team,boss){
 
 
 
-function isElementMage(m){
-  return m && (m.job==='冰雷' || m.job==='火毒');
+function papElementMage(m){
+  return m&&m.group==='法師'&&(m.job==='冰雷'||m.job==='火毒');
 }
-function isBishop(m){
-  return m && m.job==='主教';
+function papBishop(m){
+  return m&&m.job==='主教';
 }
 function papPick(pool,team,pred,sorter){
   const candidates=pool.filter(x=>pred(x)&&canAddToTeam(team,x,'普拉')).sort(sorter||byTime);
@@ -1174,60 +1175,62 @@ function papPick(pool,team,pred,sorter){
   team.push(chosen);
   return chosen;
 }
-function papHasArcher(team){
-  return team.some(isArcher);
+function papFill(pool,team,pred,sorter){
+  const pick=papPick(pool,team,pred,sorter);
+  return !!pick;
 }
-function papOutputPriority(m,team){
-  if(papHasArcher(team)){
-    // 有弓：標賊 > 劍士 / 刀賊 / 海盜 > 法師 > 其他
-    if(m.job==='標賊')return 0;
-    if(m.group==='劍士'||m.job==='刀賊'||m.group==='海盜')return 1;
-    if(m.group==='法師')return 2;
-    return 3;
-  }
-
-  // 沒弓：槍手 > 劍士 / 刀賊 / 海盜 > 法師
+function papWithArcherPriority(m){
+  // 第四階段：滿足 1 弓後，標賊 > 劍士/刀賊/拳霸 > 法師 > 槍手
+  if(m.job==='標賊')return 0;
+  if(m.group==='劍士'||m.job==='刀賊'||m.job==='拳霸')return 1;
+  if(m.group==='法師')return 2;
+  if(m.job==='槍手')return 3;
+  return 4;
+}
+function papNoArcherPriority(m){
+  // 第五階段：沒弓時，槍手 > 劍士/刀賊/海盜 > 法師 > 標賊
   if(m.job==='槍手')return 0;
   if(m.group==='劍士'||m.job==='刀賊'||m.group==='海盜')return 1;
   if(m.group==='法師')return 2;
-  if(m.job==='標賊')return 3;
-  return 4;
-}
-function canUsePapExtraMage(pool,team,cand){
-  if(!isMage(cand))return true;
-  const mageCount=team.filter(isMage).length;
-  // 普拉前兩格已經優先選 1 元素法 + 1 主教。
-  // 第三位以上法師只有沒有其他可補職業時才選。
-  if(mageCount<2)return true;
-  return !pool.some(x=>x!==cand && !isMage(x) && canAddToTeam(team,x,'普拉'));
+  if(m.job==='標賊')return 9;
+  return 3;
 }
 function buildPapTeam(pool){
   const team=[];
   const limit=6;
 
-  // 1. 普拉第一優先：冰雷 / 火毒
-  papPick(pool,team,isElementMage,byTime);
-
-  // 如果真的沒有冰雷/火毒，才用任意法師補必要 1 法。
-  if(!team.some(isMage)){
-    papPick(pool,team,isMage,byTime);
+  // 1. 普拉優先 1：挑選冰雷 / 火毒。
+  //    若完全沒有冰雷/火毒，才用其他法師補必要 1 法。
+  if(!papFill(pool,team,papElementMage,byTime)){
+    papFill(pool,team,isMage,(a,b)=>{
+      // 沒元素法時才退而求其次；主教可作必要法。
+      if(a.job==='主教'&&b.job!=='主教')return 0;
+      if(b.job==='主教'&&a.job!=='主教')return 1;
+      return byTime(a,b);
+    });
   }
 
-  // 2. 第二優先：1 主教
-  papPick(pool,team,isBishop,byTime);
+  // 2. 第二：挑選 1 主教。
+  //    若第一階段已經選到主教，這階段不再補第二主教。
+  if(!team.some(papBishop)){
+    papFill(pool,team,papBishop,byTime);
+  }
 
-  // 3. 第三優先：1 弓
-  papPick(pool,team,isArcher,byTime);
+  // 3. 第三：挑選 1 弓。
+  papFill(pool,team,isArcher,byTime);
 
-  // 4. 依有弓 / 無弓路線補滿
+  // 4 / 5. 分支補位
+  const hasArcher=team.some(isArcher);
   while(team.length<limit){
-    const candidates=pool.filter(x=>
-      canAddToTeam(team,x,'普拉') &&
-      canUsePapExtraMage(pool,team,x)
-    );
+    const candidates=pool.filter(x=>canAddToTeam(team,x,'普拉'));
     if(!candidates.length)break;
 
-    candidates.sort((a,b)=>papOutputPriority(a,team)-papOutputPriority(b,team)||jobCount(team,a)-jobCount(team,b)||byTime(a,b));
+    if(hasArcher){
+      candidates.sort((a,b)=>papWithArcherPriority(a)-papWithArcherPriority(b)||jobCount(team,a)-jobCount(team,b)||byTime(a,b));
+    }else{
+      candidates.sort((a,b)=>papNoArcherPriority(a)-papNoArcherPriority(b)||jobCount(team,a)-jobCount(team,b)||byTime(a,b));
+    }
+
     const pick=candidates[0];
     pool.splice(pool.indexOf(pick),1);
     team.push(pick);
