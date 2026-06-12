@@ -1137,6 +1137,12 @@ function canUseWarriorForFill(pool,team,boss,cand){
   return !pool.some(x=>x!==cand&&!isWarrior(x)&&canAddToTeam(team,x,boss)&&canUseMageForFill(pool,team,boss,x));
 }
 
+function teamHasArcher(team){return team.some(isArcher);}
+function sinArcherPairBonus(team,cand){
+  // 標賊優先跟弓箭手同隊：隊伍已有弓箭手時，標賊補位順位提高。
+  return cand&&cand.job==='標賊'&&teamHasArcher(team)?-1.5:0;
+}
+
 function fillTeam(pool,team,boss){
   const limit=bossLimit(boss);
   while(team.length<limit){
