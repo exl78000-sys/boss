@@ -869,6 +869,7 @@ function reqUnits(boss){
   ];
   if(boss==='普拉')return [
     {label:'法師',key:'mage',fn:isMage,hard:true},
+    {label:'第2法',key:'mage2',fn:isMage,hard:false,soft:true},
     {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true},
     {label:'標賊',key:'sin',fn:m=>m.job==='標賊',hard:false,soft:true},
     {label:'劍士',key:'warrior',fn:isWarrior,hard:false,soft:true}
@@ -1157,6 +1158,7 @@ function fillTeam(pool,team,boss){
   }
 }
 
+
 function papMagePriority(m){
   // 普拉第二位法師：主教優先，其次冰雷/火毒平等。
   if(m.job==='主教')return 0;
@@ -1164,42 +1166,66 @@ function papMagePriority(m){
   return 2;
 }
 function papOutputPriority(m,team){
-  // 普拉補位：
-  // 條件成立後優先補劍士 / 刀賊，數量不限；但劍士仍受 canUsePapWarriorForFill 限制。
-  // 輸出職業：劍士 > 盜賊 > 槍手。
+  // 普拉：
+  // 必要 1 法；2 法最優秀但不硬卡。
+  // 次必要 1 弓；有弓時標賊 1 位優先。
+  // 滿足 1 弓 + 1 標後，優先補劍士/刀賊。
   const hasArcher=team.some(isArcher);
   const sinCount=team.filter(x=>x.job==='標賊').length;
-  if(hasArcher && m.job==='標賊' && sinCount<1)return -1; // 有弓時，標賊 1 優先
+  if(hasArcher && m.job==='標賊' && sinCount<1)return -3;
 
+  const archerSinReady=hasArcher && sinCount>=1;
+  if(archerSinReady && (m.group==='劍士'||m.job==='刀賊'))return -2;
+
+  // 輸出順位：劍士 > 盜賊 > 槍手 > 其他
   if(m.group==='劍士')return 0;
-  if(m.job==='刀賊')return 1;
-  if(m.group==='盜賊')return 2;
-  if(m.job==='槍手')return 3;
-  if(m.group==='海盜')return 4;
-  if(m.group==='弓箭手')return 5;
-  if(m.group==='法師')return 6;
+  if(m.group==='盜賊')return 1;
+  if(m.job==='槍手')return 2;
+  if(m.group==='海盜')return 3;
+  if(m.group==='弓箭手')return 4;
+  if(m.group==='法師')return 5;
   return 9;
 }
-
 function canUsePapMageForFill(pool,team,cand){
   if(!isMage(cand))return true;
   const mageCount=team.filter(isMage).length;
+
+  // 1 法必要；第 2 法是最佳配置，允許優先加入。
   if(mageCount<2)return true;
-  // 普拉：沒人才加入第三位法師。
-  return !pool.some(x=>x!==cand && !isMage(x) && canAddToTeam(team,x,'普拉') && canUsePapWarriorForFill(pool,team,x));
+
+  // 第 3 法：只有真的沒其他可補職業時才加入。
+  return !pool.some(x=>
+    x!==cand &&
+    !isMage(x) &&
+    canAddToTeam(team,x,'普拉') &&
+    canUsePapWarriorForFill(pool,team,x)
+  );
 }
 function canUsePapWarriorForFill(pool,team,cand){
   if(!isWarrior(cand))return true;
   const warriorCount=team.filter(isWarrior).length;
-  if(warriorCount<1)return true; // 劍士 1 位優先
-  if(warriorCount<2){
-    // 第二位劍士：正常允許，但排序仍會讓刀賊/盜賊/槍手依規則競爭。
-    return true;
-  }
-  // 第三位劍士：除非真的沒人才補。
-  return !pool.some(x=>x!==cand && !isWarrior(x) && canAddToTeam(team,x,'普拉') && canUsePapMageForFill(pool,team,x));
-}
 
+  // 劍士 1 位優先。
+  if(warriorCount<1)return true;
+
+  // 第 2 位劍士：只有其他職業都不適合時才選。
+  if(warriorCount<2){
+    return !pool.some(x=>
+      x!==cand &&
+      !isWarrior(x) &&
+      canAddToTeam(team,x,'普拉') &&
+      canUsePapMageForFill(pool,team,x)
+    );
+  }
+
+  // 第 3 位劍士：除非真的沒人才補。
+  return !pool.some(x=>
+    x!==cand &&
+    !isWarrior(x) &&
+    canAddToTeam(team,x,'普拉') &&
+    canUsePapMageForFill(pool,team,x)
+  );
+}
 function pickPapCandidate(pool,team,pred,sorter){
   const candidates=pool.filter(x=>pred(x)&&canAddToTeam(team,x,'普拉')).sort(sorter||byTime);
   if(!candidates.length)return null;
@@ -1215,20 +1241,33 @@ function buildPapTeam(pool){
   // 1. 必要：1 法師
   pickPapCandidate(pool,team,isMage,(a,b)=>papMagePriority(a)-papMagePriority(b)||byTime(a,b));
 
-  // 2. 次必要：1 弓箭手
-  pickPapCandidate(pool,team,isArcher,byTime);
-
-  // 3. 有弓時，標賊 1 位優先
-  if(team.some(isArcher)){
-    pickPapCandidate(pool,team,m=>m.job==='標賊',byTime);
-  }
-
-  // 4. 若第二位法師可用，主教優先
+  // 2. 2 法最優秀：若可用，第二位法師優先；第二位法師主教優先。
   if(team.filter(isMage).length<2){
     pickPapCandidate(pool,team,isMage,(a,b)=>papMagePriority(a)-papMagePriority(b)||byTime(a,b));
   }
 
-  // 5. 輸出補位：劍士 > 盜賊 > 槍手；但限制多劍士與第三位法師
+  // 3. 次必要：1 弓箭手
+  pickPapCandidate(pool,team,isArcher,byTime);
+
+  // 4. 有弓時，標賊 1 位優先同隊
+  if(team.some(isArcher)){
+    pickPapCandidate(pool,team,m=>m.job==='標賊',byTime);
+  }
+
+  // 5. 滿足 1 弓 + 1 標後，優先補劍士/刀賊
+  if(team.some(isArcher) && team.some(m=>m.job==='標賊')){
+    while(team.length<limit){
+      const candidates=pool
+        .filter(x=>(isWarrior(x)||x.job==='刀賊')&&canAddToTeam(team,x,'普拉')&&canUsePapWarriorForFill(pool,team,x))
+        .sort((a,b)=>papOutputPriority(a,team)-papOutputPriority(b,team)||jobCount(team,a)-jobCount(team,b)||byTime(a,b));
+      if(!candidates.length)break;
+      const pick=candidates[0];
+      pool.splice(pool.indexOf(pick),1);
+      team.push(pick);
+    }
+  }
+
+  // 6. 一般輸出補位：劍士 > 盜賊 > 槍手；第三法/第三劍士只有沒人才進
   while(team.length<limit){
     const candidates=pool.filter(x=>
       canAddToTeam(team,x,'普拉') &&
@@ -1243,6 +1282,7 @@ function buildPapTeam(pool){
   }
   return team;
 }
+
 
 function buildTeam(available,boss){
   const pool=available.slice().sort(byTime);
