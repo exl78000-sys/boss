@@ -35,11 +35,8 @@ function dow(d){return '日一二三四五六'[d.getDay()];}
 function dateLabel(d){return `${fmt(d)} ${dow(d)}`;}
 function cycles(){const now=new Date();const th=addDays(now,(4-now.getDay()+7)%7);return [0,7].map(o=>{const s=addDays(th,o),e=addDays(s,6);return {id:`${fmt(s)}-${fmt(e)}`,label:`${fmt(s)} - ${fmt(e)}`,dates:Array.from({length:7},(_,i)=>addDays(s,i))};});}
 function cycleDates(cycleId){const c=cycles().find(x=>x.id===cycleId)||cycles()[0];return c.dates.map(dateLabel);}
-function dateOrder(label,cycleId=selectedCycle){const labels=cycleDateLabels?cycleDateLabels(cycleId):cycleDates(cycleId);const i=labels.indexOf(label);return i>=0?i:999;}
-function cycleObj(startDate){
-  const s=new Date(startDate),e=addDays(s,6);
-  return {id:`${fmt(s)}-${fmt(e)}`,label:`${fmt(s)} - ${fmt(e)}`,dates:Array.from({length:7},(_,i)=>addDays(s,i))}
-}
+function dateOrder(label,cycleId=selectedCycle){return dateOrderForCycle(label,cycleId);}
+
 function thursdayOfWeek(d){
   const x=new Date(d);
   x.setHours(0,0,0,0);
@@ -73,14 +70,12 @@ function cycleDateLabels(cycleId){
 }
 
 function dateOrderForCycle(label,cycleId){
-  try{
-    const labels=cycleDateLabels(cycleId);
-    const i=labels.indexOf(label);
-    return i>=0?i:999;
-  }catch(e){
-    return 999;
-  }
+  // 不呼叫 cycleDateLabels，避免歷史週期排序時互相遞迴造成自動編排失敗。
+  const m=String(label||'').match(/(\d+)\/(\d+)/);
+  if(!m)return 9999;
+  return Number(m[1])*100+Number(m[2]);
 }
+
 
 function toast(msg){if(!E.toast)return alert(msg);E.toast.textContent=msg;E.toast.classList.remove('hidden');setTimeout(()=>E.toast.classList.add('hidden'),2200);}
 function setStatus(msg,cls='sync-warn'){if(E.syncStatus){E.syncStatus.textContent='同步狀態：'+msg;E.syncStatus.className='hint '+cls;}}
@@ -457,7 +452,7 @@ function bindActions(){
   E.refreshMine.onclick=renderMine;
   E.selectAllDates.onclick=()=>{const checks=[...E.dateChecks.querySelectorAll('input')];const on=checks.some(x=>!x.checked);checks.forEach(x=>x.checked=on);E.selectAllDates.textContent=on?'取消全選':'日期全選';};
   if(E.submitSignup)E.submitSignup.onclick=submitSignup;
-  if(E.rosterGenerateTeams)E.rosterGenerateTeams.onclick=generateRosterTeams;
+  if(E.rosterGenerateTeams)if(E.rosterGenerateTeams)E.rosterGenerateTeams.onclick=generateRosterTeams;
   if(E.rosterCopyTeams)E.rosterCopyTeams.onclick=copyTeams;
   E.exportData.onclick=exportJson;
   E.importData.onchange=importJson;
@@ -1182,9 +1177,17 @@ function useEligibleForDisplay(m,date,boss,usage,previewUsed){
   if(previewUsed&&previewUsed.has(identity(m)))return false;
   return usageCanUse(m,date,boss,usage);
 }
+function queueDateLabels(cycleId){
+  // 自動編排專用：目前/未來週期用 cycles() 日期；歷史週期從報名資料回推日期。
+  const c=cycles().find(x=>x.id===cycleId);
+  if(c&&c.dates&&c.dates.length)return c.dates.map(dateLabel);
+  const dates=[...new Set((state.signups||[]).filter(s=>s.cycle===cycleId).map(s=>s.date).filter(Boolean))];
+  return dates.sort((a,b)=>dateOrderForCycle(a,cycleId)-dateOrderForCycle(b,cycleId));
+}
+
 function findBestCompleteTeam(cycle,boss,usage){
   const candidates=[];
-  for(const date of cycleDates(cycle)){
+  for(const date of queueDateLabels(cycle)){
     const all=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
     const available=all.filter(s=>usageCanUse(s,date,boss,usage));
     if(!available.length)continue;
@@ -1231,7 +1234,7 @@ function buildUpcomingUnformed(cycle,bossList,usage){
     let safety=0;
     while(safety++<30){
       const partials=[];
-      for(const date of cycleDates(cycle)){
+      for(const date of queueDateLabels(cycle)){
         const all=state.signups.filter(s=>s.cycle===cycle&&s.boss===boss&&s.date===date);
         const available=all.filter(s=>useEligibleForDisplay(s,date,boss,usage,previewUsed));
         if(!available.length)continue;
@@ -1260,11 +1263,12 @@ function generateRosterTeams(){
     console.error('自動編排失敗',err);
     if(E.rosterTeamResult){
       E.rosterTeamResult.classList.remove('empty');
-      E.rosterTeamResult.innerHTML='<div class="empty">自動編排失敗：'+html(err.message||err)+'</div>';
+      E.rosterTeamResult.innerHTML='<div class="empty">自動編排失敗：'+html(err && (err.message||String(err)))+'</div>';
     }
-    toast('自動編排失敗，請查看錯誤訊息');
+    toast('自動編排失敗');
   }
 }
+
 function conflictGroups(data){
   const map=new Map();
   (data.formed||[]).forEach(f=>f.team.forEach(m=>{const ak=accountKey(m);if(!ak)return;const k=`${f.date}|${ak}`;if(!map.has(k))map.set(k,[]);map.get(k).push({...m,boss:f.boss,date:f.date});}));
