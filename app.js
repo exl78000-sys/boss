@@ -37,6 +37,11 @@ function cycles(){const now=new Date();const th=addDays(now,(4-now.getDay()+7)%7
 function cycleDates(cycleId){const c=cycles().find(x=>x.id===cycleId)||cycles()[0];return c.dates.map(dateLabel);}
 function dateOrder(label,cycleId=selectedCycle){return dateOrderForCycle(label,cycleId);}
 
+function cycleObj(startDate){
+  const s=new Date(startDate),e=addDays(s,6);
+  return {id:`${fmt(s)}-${fmt(e)}`,label:`${fmt(s)} - ${fmt(e)}`,dates:Array.from({length:7},(_,i)=>addDays(s,i))}
+}
+
 function thursdayOfWeek(d){
   const x=new Date(d);
   x.setHours(0,0,0,0);
@@ -452,7 +457,7 @@ function bindActions(){
   E.refreshMine.onclick=renderMine;
   E.selectAllDates.onclick=()=>{const checks=[...E.dateChecks.querySelectorAll('input')];const on=checks.some(x=>!x.checked);checks.forEach(x=>x.checked=on);E.selectAllDates.textContent=on?'取消全選':'日期全選';};
   if(E.submitSignup)E.submitSignup.onclick=submitSignup;
-  if(E.rosterGenerateTeams)if(E.rosterGenerateTeams)E.rosterGenerateTeams.onclick=generateRosterTeams;
+  if(E.rosterGenerateTeams)E.rosterGenerateTeams.onclick=generateRosterTeams;
   if(E.rosterCopyTeams)E.rosterCopyTeams.onclick=copyTeams;
   E.exportData.onclick=exportJson;
   E.importData.onchange=importJson;
