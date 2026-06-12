@@ -913,12 +913,183 @@ function pickCandidate(pool,team,boss,pred){
   team.push(chosen);
   return chosen;
 }
+
+function altKeyOf(m){
+  return m&&m.hasAlt&&m.accountGroup?norm(m.accountGroup):'';
+}
+function dragonArcherBalanceScore(team){
+  const ar=team.filter(isArcher);
+  const hasCross=ar.some(m=>m.job==='弩手');
+  const hasBow=ar.some(m=>m.job==='弓手');
+  return (hasCross?1:0)+(hasBow?1:0);
+}
+function optimizeDragonDaggerAltSwap(pool,team,boss){
+  if(boss!=='龍王')return;
+  if(team.filter(m=>m.job==='刀賊').length>=2)return;
+
+  let changed=true, guard=0;
+  while(changed && guard++<5 && team.filter(m=>m.job==='刀賊').length<2){
+    changed=false;
+    const teamArchers=team.filter(isArcher);
+    if(teamArchers.length<2)break;
+
+    for(const archer of teamArchers){
+      const ak=altKeyOf(archer);
+      if(!ak)continue;
+
+      const dagger=pool.find(p=>p.job==='刀賊'&&altKeyOf(p)===ak);
+      if(!dagger)continue;
+
+      const tempTeam=team.filter(m=>m!==archer);
+      if(!canAddToTeam(tempTeam,dagger,boss))continue;
+
+      const reps=pool
+        .filter(p=>p!==dagger&&isArcher(p)&&canAddToTeam(tempTeam,p,boss))
+        .sort((a,b)=>{
+          const scoreA=dragonArcherBalanceScore([...tempTeam,a]);
+          const scoreB=dragonArcherBalanceScore([...tempTeam,b]);
+          return (scoreB-scoreA)||byTime(a,b);
+        });
+      if(!reps.length)continue;
+
+      const rep=reps[0];
+
+      const teamIndex=team.indexOf(archer);
+      if(teamIndex<0)continue;
+      team.splice(teamIndex,1);
+
+      const dIndex=pool.indexOf(dagger);
+      if(dIndex>=0)pool.splice(dIndex,1);
+      const rIndex=pool.indexOf(rep);
+      if(rIndex>=0)pool.splice(rIndex,1);
+
+      pool.push(archer);
+      team.push(dagger);
+      team.push(rep);
+      changed=true;
+      break;
+    }
+  }
+}
+
+
+function dragonTeamCompletenessScore(team){
+  // 隊伍完整度優先評分：
+  // 必要職業 > 次必要刀賊 > 職業多樣性 > 職業平衡 > 報名時間
+  const dk=Math.min(team.filter(isDarkKnight).length,2);
+  const archers=team.filter(isArcher);
+  const ar=Math.min(archers.length,2);
+  const bu=Math.min(team.filter(isBucc).length,1);
+  const hasCross=archers.some(m=>m.job==='弩手')?1:0;
+  const hasBow=archers.some(m=>m.job==='弓手')?1:0;
+  const dagger=Math.min(team.filter(m=>m.job==='刀賊').length,2);
+  const uniqueJobs=new Set(team.map(m=>m.job)).size;
+  const counts={};
+  team.forEach(m=>counts[m.job]=(counts[m.job]||0)+1);
+  const maxDup=Math.max(0,...Object.values(counts));
+  const avgTime=team.length?team.reduce((sum,m)=>sum+timeValue(m),0)/team.length:0;
+
+  let score=0;
+  score += dk*100000;
+  score += ar*100000;
+  score += bu*100000;
+  // 弓箭手結構：弩+弓優於雙弩/雙弓
+  score += (hasCross+hasBow)*30000;
+  // 次必要：刀賊至少 1 很重要，第 2 位也加分但較低
+  score += Math.min(dagger,1)*70000;
+  score += Math.max(0,dagger-1)*30000;
+  score += uniqueJobs*2500;
+  score -= maxDup*600;
+  // 報名早者小幅加分，避免壓過職業完整度
+  score -= avgTime/100000000000;
+  return score;
+}
+function dragonReqSatisfied(team){
+  return team.filter(isDarkKnight).length>=2 &&
+         team.filter(isArcher).length>=2 &&
+         team.filter(isBucc).length>=1;
+}
+function dragonCandidateKey(m){
+  return `${norm(m.player)}|${m.job}|${altKeyOf(m)}`;
+}
+function optimizeDragonFlexibleTeam(pool,team,boss,limit){
+  if(boss!=='龍王')return;
+  // 彈性最佳化：
+  // 把目前隊伍與候選池一起視為候選集合，在不違反同分身群組/刀賊上限的情況下，
+  // 嘗試用更高分組合替換目前隊伍。不是單一案例，而是以整體隊伍完整度為目標。
+  const combined=[...team,...pool];
+  const originalKeys=new Set(team.map(dragonCandidateKey));
+  let best=[...team];
+  let bestScore=dragonTeamCompletenessScore(best);
+
+  // 從目前隊伍每次嘗試移出 1 人，再從 pool 補 1 人。
+  // 重複執行幾輪，直到沒有更佳組合。
+  let improved=true, guard=0;
+  while(improved && guard++<12){
+    improved=false;
+    for(const out of [...best]){
+      for(const inc of pool){
+        if(best.includes(inc))continue;
+        const candidate=best.filter(m=>m!==out);
+        if(!canAddToTeam(candidate,inc,boss))continue;
+        candidate.push(inc);
+        if(!dragonReqSatisfied(candidate))continue;
+        if(candidate.length>limit)continue;
+
+        const s=dragonTeamCompletenessScore(candidate);
+        if(s>bestScore+0.0001){
+          best=candidate;
+          bestScore=s;
+          improved=true;
+        }
+      }
+    }
+  }
+
+  // 也嘗試在未滿員時直接加入高分候選
+  let added=true, addGuard=0;
+  while(best.length<limit && added && addGuard++<20){
+    added=false;
+    let bestAdd=null, bestAddScore=bestScore;
+    for(const inc of pool){
+      if(best.includes(inc))continue;
+      if(!canAddToTeam(best,inc,boss))continue;
+      const candidate=[...best,inc];
+      const s=dragonTeamCompletenessScore(candidate);
+      if(s>bestAddScore+0.0001){
+        bestAdd=inc;
+        bestAddScore=s;
+      }
+    }
+    if(bestAdd){
+      best.push(bestAdd);
+      bestScore=bestAddScore;
+      added=true;
+    }
+  }
+
+  // 回寫 team/pool
+  const bestSet=new Set(best);
+  const oldTeam=[...team];
+  team.length=0;
+  best.forEach(m=>team.push(m));
+
+  pool.length=0;
+  combined.forEach(m=>{
+    if(!bestSet.has(m))pool.push(m);
+  });
+}
+
 function fillDragonSecondaryRequirements(pool,team,boss){
   if(boss!=='龍王')return;
-  // 龍王次必要：必要職業完成後，必須優先補刀賊。
-  // 目標：至少 1 位刀賊，最多 2 位刀賊。
-  // 若有符合條件且不違反分身群組的刀賊，會先補刀賊，再進入一般補位。
-  while(team.filter(m=>m.job==='刀賊').length<2){
+  const limit=bosses.find(b=>b.name===boss)?.limit||12;
+
+  // 先用隊伍完整度演算法做彈性替換。
+  // 目標：必要職業完整 > 刀賊至少 1 / 最多 2 > 職業多樣性 > 報名時間。
+  optimizeDragonFlexibleTeam(pool,team,boss,limit);
+
+  // 若最佳化後仍未滿刀賊 1 位，且有可用刀賊，再優先補刀賊。
+  while(team.filter(m=>m.job==='刀賊').length<2 && team.length<limit){
     const picked=pickCandidate(pool,team,boss,m=>m.job==='刀賊');
     if(!picked)break;
   }
