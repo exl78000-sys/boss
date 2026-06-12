@@ -945,7 +945,7 @@ function optimizeDragonDaggerAltSwap(pool,team,boss){
 function dragonTeamCompletenessScore(team){
   // 隊伍完整度優先評分：
   // 必要職業 > 次必要刀賊 > 職業多樣性 > 職業平衡 > 報名時間
-  const dk=Math.min(team.filter(isDarkKnight).length,2);
+  const dk=Math.min(team.filter(isDK).length,2);
   const archers=team.filter(isArcher);
   const ar=Math.min(archers.length,2);
   const bu=Math.min(team.filter(isBucc).length,1);
@@ -974,7 +974,7 @@ function dragonTeamCompletenessScore(team){
   return score;
 }
 function dragonReqSatisfied(team){
-  return team.filter(isDarkKnight).length>=2 &&
+  return team.filter(isDK).length>=2 &&
          team.filter(isArcher).length>=2 &&
          team.filter(isBucc).length>=1;
 }
@@ -989,16 +989,101 @@ function optimizeDragonFlexibleTeam(pool,team,boss,limit){
 
 
 
+
+function dragonHardSatisfied(team){
+  return reqStatus(team,'龍王').filter(r=>!r.soft).every(r=>r.missing===0);
+}
+function dragonRequiredReplacementPredicate(out){
+  if(isDK(out))return isDK;
+  if(isBucc(out))return isBucc;
+  if(isArcher(out))return isArcher;
+  return null;
+}
+function dragonReplacementSort(out,tempTeam,dagger){
+  return (a,b)=>{
+    // 弓箭手補位時，優先維持弩手+弓手結構。
+    if(isArcher(out)){
+      const score=(x)=>{
+        const archers=[...tempTeam,dagger,x].filter(isArcher);
+        const hasXbow=archers.some(m=>m.job==='弩手')?1:0;
+        const hasBow=archers.some(m=>m.job==='弓手')?1:0;
+        return hasXbow+hasBow;
+      };
+      const diff=score(b)-score(a);
+      if(diff)return diff;
+    }
+    return byTime(a,b);
+  };
+}
+function tryDragonAltSecondarySwap(pool,team,boss){
+  if(boss!=='龍王')return false;
+  if(team.filter(m=>m.job==='刀賊').length>=2)return false;
+
+  // 只處理「刀賊被同分身群組擋住」的情況。
+  // 若能移出同群組必要職業，並由另一位候選補回必要職業，才允許替換。
+  const daggers=pool.filter(m=>m.job==='刀賊').sort(byTime);
+  for(const dagger of daggers){
+    const dk=accountKey(dagger);
+    if(!dk)continue;
+
+    const conflicts=team.filter(m=>accountKey(m)&&accountKey(m)===dk);
+    if(!conflicts.length)continue;
+
+    for(const out of conflicts){
+      const pred=dragonRequiredReplacementPredicate(out);
+      if(!pred)continue;
+
+      const tempTeam=team.filter(m=>m!==out);
+      if(!canAddToTeam(tempTeam,dagger,boss))continue;
+
+      const withDagger=[...tempTeam,dagger];
+      const replacements=pool
+        .filter(m=>m!==dagger && pred(m) && canAddToTeam(withDagger,m,boss))
+        .sort(dragonReplacementSort(out,tempTeam,dagger));
+
+      if(!replacements.length)continue;
+
+      const rep=replacements[0];
+      const candidate=[...withDagger,rep];
+      if(!dragonHardSatisfied(candidate))continue;
+
+      // 執行替換：
+      // out 從隊伍移回 pool；dagger 與 rep 進隊。
+      const outIndex=team.indexOf(out);
+      if(outIndex>=0)team.splice(outIndex,1);
+
+      const daggerIndex=pool.indexOf(dagger);
+      if(daggerIndex>=0)pool.splice(daggerIndex,1);
+      const repIndex=pool.indexOf(rep);
+      if(repIndex>=0)pool.splice(repIndex,1);
+
+      pool.push(out);
+      team.push(dagger);
+      team.push(rep);
+      return true;
+    }
+  }
+  return false;
+}
+
 function fillDragonSecondaryRequirements(pool,team,boss){
   if(boss!=='龍王')return;
-  // v66 穩定版：先回到可運作邏輯。
-  // 龍王必要職業完成後，優先補刀賊；最好至少 1，最多 2。
-  // 暫時取消複雜替換評分，避免龍王與週王編排失敗。
+  // v67 安全版：
+  // 1. 先嘗試分身必要/次必要遞補：
+  //    如果同群組刀賊能進隊，且必要職業可由其他候選補回，才替換。
+  // 2. 再直接補可用刀賊。
+  // 3. 刀賊最好至少 1，最多 2；但刀賊不足不影響成團。
+  let guard=0;
+  while(team.filter(m=>m.job==='刀賊').length<2 && guard++<3){
+    const swapped=tryDragonAltSecondarySwap(pool,team,boss);
+    if(!swapped)break;
+  }
   while(team.filter(m=>m.job==='刀賊').length<2){
     const picked=pickCandidate(pool,team,boss,m=>m.job==='刀賊');
     if(!picked)break;
   }
 }
+
 
 function outputPriority(boss,x){
   if(boss==='龍王'){
