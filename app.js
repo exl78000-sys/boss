@@ -244,6 +244,7 @@ function identity(s){return norm(s.player);}
 function bossLimit(boss){return bosses.find(b=>b.name===boss)?.limit||6;}
 function isDK(s){return s.job==='黑騎';}
 function isBucc(s){return s.job==='拳霸';}
+function isWarrior(s){return s.group==='劍士';}
 function isArcher(s){return s.group==='弓箭手';}
 function isMage(s){return s.group==='法師';}
 function tag(s){if(s.job==='黑騎')return '黑騎';if(s.job==='拳霸')return '拳';if(s.group==='弓箭手')return '弓';if(s.group==='法師')return '法';return '輸出';}
@@ -832,6 +833,8 @@ function canAddToTeam(team,cand,boss){
   const limit=bossLimit(boss); if(team.length>=limit)return false;
   const mageCount=team.filter(isMage).length;
   if((boss==='困拉'||boss==='炎魔')&&isMage(cand)&&mageCount>=2)return false;
+  // 普拉：劍士最多 2；第 2 位只有在補位階段其他職業都不適合時才會選。
+  if(boss==='普拉'&&isWarrior(cand)&&team.filter(isWarrior).length>=2)return false;
   // 龍王次必要：刀賊優先 1、最多 2 位。
   if(boss==='龍王'&&cand.job==='刀賊'&&team.filter(m=>m.job==='刀賊').length>=2)return false;
   return true;
@@ -866,7 +869,8 @@ function reqUnits(boss){
   ];
   if(boss==='普拉')return [
     {label:'法師',key:'mage',fn:isMage,hard:false,soft:true},
-    {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true}
+    {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true},
+    {label:'劍士',key:'warrior',fn:isWarrior,hard:false,soft:true}
   ];
   return [];
 }
@@ -1108,7 +1112,8 @@ function outputPriority(boss,x){
   if(boss==='普拉'){
     if(x.group==='法師')return 0;
     if(x.group==='弓箭手')return 1;
-    return 2;
+    if(x.group==='劍士')return 2;
+    return 3;
   }
   return 9;
 }
@@ -1123,10 +1128,19 @@ function canUseMageForFill(pool,team,boss,cand){
   }
   return true;
 }
+function canUseWarriorForFill(pool,team,boss,cand){
+  if(boss!=='普拉'||!isWarrior(cand))return true;
+  const warriorCount=team.filter(isWarrior).length;
+  // 普拉輸出職業：先讓 1 位劍士進隊。
+  if(warriorCount<1)return true;
+  // 已有 1 位劍士後，只有其他可用職業都不適合時，才允許第 2 位劍士。
+  return !pool.some(x=>x!==cand&&!isWarrior(x)&&canAddToTeam(team,x,boss)&&canUseMageForFill(pool,team,boss,x));
+}
+
 function fillTeam(pool,team,boss){
   const limit=bossLimit(boss);
   while(team.length<limit){
-    const candidates=pool.filter(x=>canAddToTeam(team,x,boss)&&canUseMageForFill(pool,team,boss,x));
+    const candidates=pool.filter(x=>canAddToTeam(team,x,boss)&&canUseMageForFill(pool,team,boss,x)&&canUseWarriorForFill(pool,team,boss,x));
     if(!candidates.length)break;
     const jobCounts={}; team.forEach(m=>{jobCounts[m.job]=(jobCounts[m.job]||0)+1;});
     candidates.sort((a,b)=>{
