@@ -1159,12 +1159,21 @@ function fillTeam(pool,team,boss){
 }
 
 
-function papMagePriority(m){
-  // 普拉第二位法師：主教優先，其次冰雷/火毒平等。
+
+
+function papFirstMagePriority(m){
+  // 普拉第一位法師：冰雷 / 火毒優先，主教其次。
+  if(m.job==='冰雷'||m.job==='火毒')return 0;
+  if(m.job==='主教')return 1;
+  return 2;
+}
+function papSecondMagePriority(m){
+  // 普拉第二位法師：主教優先，其次冰雷 / 火毒。
   if(m.job==='主教')return 0;
   if(m.job==='冰雷'||m.job==='火毒')return 1;
   return 2;
 }
+
 function papOutputPriority(m,team){
   // 普拉：
   // 必要 1 法；2 法最優秀但不硬卡。
@@ -1239,11 +1248,11 @@ function buildPapTeam(pool){
   const limit=6;
 
   // 1. 必要：1 法師
-  pickPapCandidate(pool,team,isMage,(a,b)=>papMagePriority(a)-papMagePriority(b)||byTime(a,b));
+  pickPapCandidate(pool,team,isMage,(a,b)=>papFirstMagePriority(a)-papFirstMagePriority(b)||byTime(a,b));
 
   // 2. 2 法最優秀：若可用，第二位法師優先；第二位法師主教優先。
   if(team.filter(isMage).length<2){
-    pickPapCandidate(pool,team,isMage,(a,b)=>papMagePriority(a)-papMagePriority(b)||byTime(a,b));
+    pickPapCandidate(pool,team,isMage,(a,b)=>papSecondMagePriority(a)-papSecondMagePriority(b)||byTime(a,b));
   }
 
   // 3. 次必要：1 弓箭手
