@@ -834,7 +834,7 @@ function canAddToTeam(team,cand,boss){
   const mageCount=team.filter(isMage).length;
   if((boss==='困拉'||boss==='炎魔')&&isMage(cand)&&mageCount>=2)return false;
   // 普拉：劍士最多 2；第 2 位只有在補位階段其他職業都不適合時才會選。
-  if(boss==='普拉'&&isWarrior(cand)&&team.filter(isWarrior).length>=2)return false;
+  if(boss==='普拉'&&isWarrior(cand)&&team.filter(isWarrior).length>=3)return false;
   // 龍王次必要：刀賊優先 1、最多 2 位。
   if(boss==='龍王'&&cand.job==='刀賊'&&team.filter(m=>m.job==='刀賊').length>=2)return false;
   return true;
@@ -868,8 +868,9 @@ function reqUnits(boss){
     {label:'主教',key:'bishop',fn:m=>m.job==='主教',fallback:isMage,hard:true,groupLabel:'法師'}
   ];
   if(boss==='普拉')return [
-    {label:'法師',key:'mage',fn:isMage,hard:false,soft:true},
+    {label:'法師',key:'mage',fn:isMage,hard:true},
     {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true},
+    {label:'標賊',key:'sin',fn:m=>m.job==='標賊',hard:false,soft:true},
     {label:'劍士',key:'warrior',fn:isWarrior,hard:false,soft:true}
   ];
   return [];
@@ -1110,10 +1111,7 @@ function outputPriority(boss,x){
     return 3;
   }
   if(boss==='普拉'){
-    if(x.group==='法師')return 0;
-    if(x.group==='弓箭手')return 1;
-    if(x.group==='劍士')return 2;
-    return 3;
+    return papOutputPriority(x,[]);
   }
   return 9;
 }
@@ -1158,6 +1156,92 @@ function fillTeam(pool,team,boss){
     team.push(chosen);
   }
 }
+
+function papMagePriority(m){
+  // 普拉第二位法師：主教優先，其次冰雷/火毒平等。
+  if(m.job==='主教')return 0;
+  if(m.job==='冰雷'||m.job==='火毒')return 1;
+  return 2;
+}
+function papOutputPriority(m,team){
+  // 普拉輸出職業：
+  // 有弓箭手時，標賊 1 位優先。
+  const hasArcher=team.some(isArcher);
+  const sinCount=team.filter(x=>x.job==='標賊').length;
+  if(hasArcher && m.job==='標賊' && sinCount<1)return -1;
+
+  // 輸出順位：劍士 > 盜賊 > 槍手 > 其他
+  if(m.group==='劍士')return 0;
+  if(m.group==='盜賊')return 1;
+  if(m.job==='槍手')return 2;
+  if(m.group==='海盜')return 3;
+  if(m.group==='弓箭手')return 4;
+  if(m.group==='法師')return 5;
+  return 9;
+}
+function canUsePapMageForFill(pool,team,cand){
+  if(!isMage(cand))return true;
+  const mageCount=team.filter(isMage).length;
+  if(mageCount<2)return true;
+  // 普拉：沒人才加入第三位法師。
+  return !pool.some(x=>x!==cand && !isMage(x) && canAddToTeam(team,x,'普拉') && canUsePapWarriorForFill(pool,team,x));
+}
+function canUsePapWarriorForFill(pool,team,cand){
+  if(!isWarrior(cand))return true;
+  const warriorCount=team.filter(isWarrior).length;
+  if(warriorCount<1)return true; // 劍士 1 位優先
+  if(warriorCount>=3)return false;
+  if(warriorCount<2){
+    // 第二位劍士：只有其他職業都不適合時才選
+    return !pool.some(x=>x!==cand && !isWarrior(x) && canAddToTeam(team,x,'普拉') && canUsePapMageForFill(pool,team,x));
+  }
+  // 第三位劍士：除非真的沒人才補
+  return !pool.some(x=>x!==cand && !isWarrior(x) && canAddToTeam(team,x,'普拉') && canUsePapMageForFill(pool,team,x));
+}
+function pickPapCandidate(pool,team,pred,sorter){
+  const candidates=pool.filter(x=>pred(x)&&canAddToTeam(team,x,'普拉')).sort(sorter||byTime);
+  if(!candidates.length)return null;
+  const chosen=candidates[0];
+  pool.splice(pool.indexOf(chosen),1);
+  team.push(chosen);
+  return chosen;
+}
+function buildPapTeam(pool){
+  const team=[];
+  const limit=6;
+
+  // 1. 必要：1 法師
+  pickPapCandidate(pool,team,isMage,(a,b)=>papMagePriority(a)-papMagePriority(b)||byTime(a,b));
+
+  // 2. 次必要：1 弓箭手
+  pickPapCandidate(pool,team,isArcher,byTime);
+
+  // 3. 有弓時，標賊 1 位優先
+  if(team.some(isArcher)){
+    pickPapCandidate(pool,team,m=>m.job==='標賊',byTime);
+  }
+
+  // 4. 若第二位法師可用，主教優先
+  if(team.filter(isMage).length<2){
+    pickPapCandidate(pool,team,isMage,(a,b)=>papMagePriority(a)-papMagePriority(b)||byTime(a,b));
+  }
+
+  // 5. 輸出補位：劍士 > 盜賊 > 槍手；但限制多劍士與第三位法師
+  while(team.length<limit){
+    const candidates=pool.filter(x=>
+      canAddToTeam(team,x,'普拉') &&
+      canUsePapMageForFill(pool,team,x) &&
+      canUsePapWarriorForFill(pool,team,x)
+    );
+    if(!candidates.length)break;
+    candidates.sort((a,b)=>papOutputPriority(a,team)-papOutputPriority(b,team)||jobCount(team,a)-jobCount(team,b)||byTime(a,b));
+    const pick=candidates[0];
+    pool.splice(pool.indexOf(pick),1);
+    team.push(pick);
+  }
+  return team;
+}
+
 function buildTeam(available,boss){
   const pool=available.slice().sort(byTime);
   const team=[];
