@@ -867,10 +867,9 @@ function reqUnits(boss){
     {label:'主教',key:'bishop',fn:m=>m.job==='主教',fallback:isMage,hard:true,groupLabel:'法師'}
   ];
   if(boss==='普拉')return [
-    {label:'法師',key:'mage',fn:isMage,hard:true},
-    {label:'第2法',key:'mage2',fn:isMage,hard:false,soft:true},
-    {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true},
-    {label:'標賊',key:'sin',fn:m=>m.job==='標賊',hard:false,soft:true}
+    {label:'冰雷/火毒',key:'elementMage',fn:isElementMage,hard:true},
+    {label:'主教',key:'bishop',fn:isBishop,hard:false,soft:true},
+    {label:'弓箭手',key:'archer',fn:isArcher,hard:false,soft:true}
   ];
   return [];
 }
@@ -1160,74 +1159,14 @@ function fillTeam(pool,team,boss){
 
 
 
-function papFirstMagePriority(m){
-  // 普拉必要第 1 法：火毒 / 冰雷優先，主教其次。
-  if(m.job==='火毒'||m.job==='冰雷')return 0;
-  if(m.job==='主教')return 1;
-  return 2;
+
+function isElementMage(m){
+  return m && (m.job==='冰雷' || m.job==='火毒');
 }
-function papSecondMagePriority(m){
-  // 普拉次必要第 2 法：主教優先，其次火毒 / 冰雷。
-  if(m.job==='主教')return 0;
-  if(m.job==='火毒'||m.job==='冰雷')return 1;
-  return 2;
+function isBishop(m){
+  return m && m.job==='主教';
 }
-
-function papSecondMagePriorityByTeam(m,team){
-  // 普拉 2 法最佳組合：冰雷/火毒 + 主教。
-  // 如果第一法已經是主教，第二法改優先冰雷/火毒，避免雙主教。
-  const hasBishop=team.some(x=>x.job==='主教');
-  const hasElement=team.some(x=>x.job==='火毒'||x.job==='冰雷');
-
-  if(hasBishop&&!hasElement){
-    if(m.job==='火毒'||m.job==='冰雷')return 0;
-    if(m.job==='主教')return 2;
-    return 3;
-  }
-
-  if(!hasBishop&&hasElement){
-    if(m.job==='主教')return 0;
-    if(m.job==='火毒'||m.job==='冰雷')return 1;
-    return 3;
-  }
-
-  // 沒有法師或狀態特殊時，維持第二法主教優先。
-  if(m.job==='主教')return 0;
-  if(m.job==='火毒'||m.job==='冰雷')return 1;
-  return 3;
-}
-
-function papOutputPriority(m,team){
-  const hasArcher=team.some(isArcher);
-
-  if(hasArcher){
-    // 有弓：標賊 > 劍士/刀賊（不限數量） > 其他
-    if(m.job==='標賊')return 0;
-    if(m.group==='劍士'||m.job==='刀賊')return 1;
-    return 2;
-  }
-
-  // 無弓：槍手 > 劍/刀賊/拳霸 > 法師 > 標賊（都沒人才選）
-  if(m.job==='槍手')return 0;
-  if(m.group==='劍士'||m.job==='刀賊'||m.job==='拳霸')return 1;
-  if(m.group==='法師')return 2;
-  if(m.job==='標賊')return 9;
-  return 3;
-}
-function canUsePapMageForFill(pool,team,cand){
-  if(!isMage(cand))return true;
-  const mageCount=team.filter(isMage).length;
-  // 第 1 法必要，第 2 法次必要；第 3 法只有沒人才加入。
-  if(mageCount<2)return true;
-  return !pool.some(x=>x!==cand && !isMage(x) && canAddToTeam(team,x,'普拉'));
-}
-function canUsePapNoArcherSinForFill(pool,team,cand){
-  // 無弓時標賊最後，只有真的沒有其他可補職業才選。
-  if(team.some(isArcher))return true;
-  if(cand.job!=='標賊')return true;
-  return !pool.some(x=>x!==cand && x.job!=='標賊' && canAddToTeam(team,x,'普拉') && canUsePapMageForFill(pool,team,x));
-}
-function pickPapCandidate(pool,team,pred,sorter){
+function papPick(pool,team,pred,sorter){
   const candidates=pool.filter(x=>pred(x)&&canAddToTeam(team,x,'普拉')).sort(sorter||byTime);
   if(!candidates.length)return null;
   const chosen=candidates[0];
@@ -1235,36 +1174,59 @@ function pickPapCandidate(pool,team,pred,sorter){
   team.push(chosen);
   return chosen;
 }
+function papHasArcher(team){
+  return team.some(isArcher);
+}
+function papOutputPriority(m,team){
+  if(papHasArcher(team)){
+    // 有弓：標賊 > 劍士 / 刀賊 / 海盜 > 法師 > 其他
+    if(m.job==='標賊')return 0;
+    if(m.group==='劍士'||m.job==='刀賊'||m.group==='海盜')return 1;
+    if(m.group==='法師')return 2;
+    return 3;
+  }
+
+  // 沒弓：槍手 > 劍士 / 刀賊 / 海盜 > 法師
+  if(m.job==='槍手')return 0;
+  if(m.group==='劍士'||m.job==='刀賊'||m.group==='海盜')return 1;
+  if(m.group==='法師')return 2;
+  if(m.job==='標賊')return 3;
+  return 4;
+}
+function canUsePapExtraMage(pool,team,cand){
+  if(!isMage(cand))return true;
+  const mageCount=team.filter(isMage).length;
+  // 普拉前兩格已經優先選 1 元素法 + 1 主教。
+  // 第三位以上法師只有沒有其他可補職業時才選。
+  if(mageCount<2)return true;
+  return !pool.some(x=>x!==cand && !isMage(x) && canAddToTeam(team,x,'普拉'));
+}
 function buildPapTeam(pool){
   const team=[];
   const limit=6;
 
-  // 1. 必要職業：1 法，優先火毒/冰雷。
-  pickPapCandidate(pool,team,isMage,(a,b)=>papFirstMagePriority(a)-papFirstMagePriority(b)||byTime(a,b));
+  // 1. 普拉第一優先：冰雷 / 火毒
+  papPick(pool,team,isElementMage,byTime);
 
-  // 2. 次必要：1 法，優先主教。
-  if(team.filter(isMage).length<2){
-    pickPapCandidate(pool,team,isMage,(a,b)=>papSecondMagePriorityByTeam(a,team)-papSecondMagePriorityByTeam(b,team)||byTime(a,b));
+  // 如果真的沒有冰雷/火毒，才用任意法師補必要 1 法。
+  if(!team.some(isMage)){
+    papPick(pool,team,isMage,byTime);
   }
 
-  // 3. 次必要：1 弓。
-  pickPapCandidate(pool,team,isArcher,byTime);
+  // 2. 第二優先：1 主教
+  papPick(pool,team,isBishop,byTime);
 
-  // 4. 有弓時，標賊優先。
-  if(team.some(isArcher)){
-    pickPapCandidate(pool,team,m=>m.job==='標賊',byTime);
-  }
+  // 3. 第三優先：1 弓
+  papPick(pool,team,isArcher,byTime);
 
-  // 5. 補位：
-  // 有弓：標賊 > 劍士/刀賊（不限數量） > 其他
-  // 無弓：槍手 > 劍/刀賊/拳霸 > 法師 > 標賊（都沒人才選）
+  // 4. 依有弓 / 無弓路線補滿
   while(team.length<limit){
     const candidates=pool.filter(x=>
       canAddToTeam(team,x,'普拉') &&
-      canUsePapMageForFill(pool,team,x) &&
-      canUsePapNoArcherSinForFill(pool,team,x)
+      canUsePapExtraMage(pool,team,x)
     );
     if(!candidates.length)break;
+
     candidates.sort((a,b)=>papOutputPriority(a,team)-papOutputPriority(b,team)||jobCount(team,a)-jobCount(team,b)||byTime(a,b));
     const pick=candidates[0];
     pool.splice(pool.indexOf(pick),1);
@@ -1272,6 +1234,7 @@ function buildPapTeam(pool){
   }
   return team;
 }
+
 
 
 
